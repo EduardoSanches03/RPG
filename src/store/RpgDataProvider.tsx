@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Character, RpgDataV1, Session } from "../domain/rpg";
 import { RpgDataContext, type RpgDataActions } from "./RpgDataContext";
+import { useAuth } from "../contexts/AuthContext";
+import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
 import {
   createSeedData,
   loadRpgData,
+  normalizeRpgDataV1,
   newId,
   newIsoNow,
   saveRpgData,
@@ -11,12 +14,96 @@ import {
 
 export function RpgDataProvider(props: { children: React.ReactNode }) {
   const [data, setData] = useState<RpgDataV1>(() => loadRpgData());
+  const { user, isLoading: isAuthLoading, isConfigured } = useAuth();
+  const [isCloudReady, setIsCloudReady] = useState(false);
+  const [, setCloudError] = useState<string | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isConfigured || !isSupabaseConfigured || !supabase) {
+      setIsCloudReady(false);
+      setCloudError(null);
+      return;
+    }
+    if (!user) {
+      setIsCloudReady(false);
+      setCloudError(null);
+      return;
+    }
+
+    let isCancelled = false;
+
+    (async () => {
+      try {
+        setCloudError(null);
+        const { data: row, error } = await supabase
+          .from("rpg_data")
+          .select("data")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (isCancelled) return;
+
+        if (error) throw error;
+
+        if (row?.data) {
+          const normalized = normalizeRpgDataV1(row.data as unknown);
+          setData(normalized);
+          saveRpgData(normalized);
+        } else {
+          await supabase.from("rpg_data").upsert({
+            user_id: user.id,
+            data: normalizeRpgDataV1(data as unknown),
+            updated_at: new Date().toISOString(),
+          });
+        }
+
+        if (!isCancelled) setIsCloudReady(true);
+      } catch (e: any) {
+        if (!isCancelled) {
+          setIsCloudReady(false);
+          setCloudError(
+            e?.message ? String(e.message) : "Erro ao sincronizar com a nuvem",
+          );
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user, isAuthLoading, isConfigured]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, []);
 
   const actions = useMemo<RpgDataActions>(() => {
     function commit(updater: (prev: RpgDataV1) => RpgDataV1) {
       setData((prev) => {
         const next = updater(prev);
         saveRpgData(next);
+
+        if (user && isCloudReady && supabase) {
+          const client = supabase;
+          const userId = user.id;
+          if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = window.setTimeout(() => {
+            void (async () => {
+              try {
+                await client.from("rpg_data").upsert({
+                  user_id: userId,
+                  data: next,
+                  updated_at: new Date().toISOString(),
+                });
+              } catch {}
+            })();
+          }, 600);
+        }
+
         return next;
       });
     }
@@ -238,7 +325,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
     };
-  }, []);
+  }, [isCloudReady, user]);
 
   return (
     <RpgDataContext.Provider value={{ data, actions }}>

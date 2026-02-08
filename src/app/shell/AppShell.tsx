@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { AuthProvider, useAuth } from "../../contexts/AuthContext";
 import { RpgDataProvider } from "../../store/RpgDataProvider";
 import {
   IconD20Mark,
@@ -9,15 +11,35 @@ import {
   IconUsers,
 } from "./icons";
 
-const navItems = [
-  { to: "/dashboard", label: "Dashboard", Icon: IconGrid },
-  { to: "/characters", label: "Personagens", Icon: IconUsers },
-  { to: "/sessions", label: "Sessões", Icon: IconCalendar },
-  { to: "/notes", label: "Notas", Icon: IconNotes },
-  { to: "/settings", label: "Configurações", Icon: IconCog },
-];
-
 export function AppShell() {
+  return (
+    <AuthProvider>
+      <AppShellContent />
+    </AuthProvider>
+  );
+}
+
+function AppShellContent() {
+  const { user } = useAuth();
+
+  const userLabel = useMemo(() => {
+    const metaName = (user?.user_metadata as any)?.name;
+    if (typeof metaName === "string" && metaName.trim()) return metaName.trim();
+    const email = user?.email ?? "";
+    if (!email) return "Login";
+    return email.split("@")[0] || email;
+  }, [user]);
+
+  const navItems = useMemo(() => {
+    return [
+      { to: "/dashboard", label: "Dashboard", Icon: IconGrid },
+      { to: "/characters", label: "Personagens", Icon: IconUsers },
+      { to: "/sessions", label: "Sessões", Icon: IconCalendar },
+      { to: "/notes", label: "Notas", Icon: IconNotes },
+      { to: "/login", label: user ? userLabel : "Login", Icon: IconCog },
+    ];
+  }, [user, userLabel]);
+
   return (
     <RpgDataProvider>
       <div className="app-shell">
@@ -36,9 +58,7 @@ export function AppShell() {
                   key={item.to}
                   to={item.to}
                   className={({ isActive }) =>
-                    isActive
-                      ? "topbar__link topbar__link--active"
-                      : "topbar__link"
+                    isActive ? "topbar__link topbar__link--active" : "topbar__link"
                   }
                   title={item.label}
                   aria-label={item.label}
