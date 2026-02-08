@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { IconPlus, IconTrash, IconUser } from "../app/shell/icons";
+import {
+  defaultLevelForSystem,
+  isSavagePathfinder,
+  formatLevel,
+  savagePathfinderRanks,
+  type SavagePathfinderRank,
+} from "../domain/savagePathfinder";
 import { useRpgData } from "../store/RpgDataContext";
 
 export function CharactersPage() {
@@ -9,12 +16,13 @@ export function CharactersPage() {
 
   // Estado do modal de criação
   const [isCreating, setIsCreating] = useState(false);
-  const [newSystem, setNewSystem] = useState("savage_pathfinder");
+  const [newSystem] = useState("savage_pathfinder");
   const [newName, setNewName] = useState("");
-  const [newPlayerName, setNewPlayerName] = useState("");
   const [newClass, setNewClass] = useState("");
   const [newRace, setNewRace] = useState("");
-  const [newLevel, setNewLevel] = useState(1);
+  const [newLevel, setNewLevel] = useState<number | SavagePathfinderRank>(
+    defaultLevelForSystem("savage_pathfinder"),
+  );
 
   const rows = useMemo(() => {
     return [...data.characters].sort((a, b) => a.name.localeCompare(b.name));
@@ -25,17 +33,16 @@ export function CharactersPage() {
     actions.upsertCharacter({
       name: newName,
       system: newSystem,
-      playerName: newPlayerName,
+      playerName: "", // Removido da UI, padrão vazio
       class: newClass,
       race: newRace,
       level: newLevel,
     });
     setIsCreating(false);
     setNewName("");
-    setNewPlayerName("");
     setNewClass("");
     setNewRace("");
-    setNewLevel(1);
+    setNewLevel(defaultLevelForSystem(newSystem));
   }
 
   return (
@@ -54,44 +61,31 @@ export function CharactersPage() {
       {isCreating && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h2 style={{ marginTop: 0 }}>Criar Ficha</h2>
-
-            <div className="field">
-              <label className="label">Sistema de Jogo</label>
-              <select
-                className="input"
-                value={newSystem}
-                onChange={(e) => setNewSystem(e.target.value)}
-              >
-                <option value="savage_pathfinder">Savage Pathfinder</option>
-              </select>
-            </div>
+            <header className="modal-header">
+              <h2>Nova Ficha</h2>
+              <div className="badge badge--accent">Savage Pathfinder</div>
+            </header>
 
             <div className="field">
               <label className="label">Nome do Personagem</label>
               <input
-                className="input"
+                className="input input--lg"
                 autoFocus
+                placeholder="Ex: Valeros, o Guerreiro"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
               />
             </div>
-            <div className="field">
-              <label className="label">Jogador</label>
-              <input
-                className="input"
-                value={newPlayerName}
-                onChange={(e) => setNewPlayerName(e.target.value)}
-              />
-            </div>
+
             <div
               className="grid"
-              style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}
+              style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}
             >
               <div className="field">
                 <label className="label">Classe</label>
                 <input
                   className="input"
+                  placeholder="Guerreiro"
                   value={newClass}
                   onChange={(e) => setNewClass(e.target.value)}
                 />
@@ -100,21 +94,39 @@ export function CharactersPage() {
                 <label className="label">Raça</label>
                 <input
                   className="input"
+                  placeholder="Humano"
                   value={newRace}
                   onChange={(e) => setNewRace(e.target.value)}
                 />
               </div>
               <div className="field">
                 <label className="label">Nível</label>
-                <input
-                  type="number"
-                  className="input"
-                  min={1}
-                  value={newLevel}
-                  onChange={(e) => setNewLevel(Number(e.target.value))}
-                />
+                {isSavagePathfinder(newSystem) ? (
+                  <select
+                    className="input"
+                    value={typeof newLevel === "string" ? newLevel : "Novato"}
+                    onChange={(e) =>
+                      setNewLevel(e.target.value as SavagePathfinderRank)
+                    }
+                  >
+                    {savagePathfinderRanks.map((rank) => (
+                      <option key={rank} value={rank}>
+                        {rank}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    className="input"
+                    min={1}
+                    value={typeof newLevel === "number" ? newLevel : 1}
+                    onChange={(e) => setNewLevel(Number(e.target.value))}
+                  />
+                )}
               </div>
             </div>
+
             <div className="modal-actions">
               <button
                 className="button button--ghost"
@@ -123,11 +135,11 @@ export function CharactersPage() {
                 Cancelar
               </button>
               <button
-                className="button"
+                className="button button--primary"
                 onClick={handleCreate}
                 disabled={!newName.trim()}
               >
-                Criar
+                Criar Ficha
               </button>
             </div>
           </div>
@@ -160,10 +172,8 @@ export function CharactersPage() {
                 <div className="character-card__info">
                   <div className="character-card__name">{char.name}</div>
                   <div className="character-card__meta">
-                    {char.class || "Classe"} • Nível {char.level || 1}
-                  </div>
-                  <div className="character-card__player">
-                    Jog: {char.playerName || "—"}
+                    {char.class || "Classe"} • Nível{" "}
+                    {formatLevel(char.system, char.level)}
                   </div>
                 </div>
               </div>
@@ -202,7 +212,38 @@ export function CharactersPage() {
           display: flex;
           flex-direction: column;
           gap: 16px;
-          box-shadow: var(--shadow);
+          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 8px;
+        }
+        .modal-header h2 {
+          margin: 0;
+          font-size: 20px;
+        }
+        .badge {
+          display: inline-block;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          background: var(--surface);
+          color: var(--text);
+          border: 1px solid var(--border);
+        }
+        .badge--accent {
+          background: rgba(255, 50, 50, 0.1);
+          color: var(--accent);
+          border-color: var(--accent);
+        }
+        .input--lg {
+          font-size: 16px;
+          padding: 12px;
         }
         .modal-actions {
           display: flex;

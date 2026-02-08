@@ -1,3 +1,5 @@
+import type { SavagePathfinderRank } from "./savagePathfinder";
+
 export type RpgId = string;
 
 export type Campaign = {
@@ -118,7 +120,7 @@ export type Character = {
   playerName: string;
   class?: string;
   race?: string;
-  level?: number;
+  level?: number | SavagePathfinderRank;
   stats?: CharacterStats;
   attributes?: CharacterAttributes;
   modules: CharacterModule[];

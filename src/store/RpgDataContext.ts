@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { Character, CharacterModule, RpgDataV1 } from "../domain/rpg";
+import type { SavagePathfinderRank } from "../domain/savagePathfinder";
 
 export type RpgDataActions = {
   setCampaignName: (name: string) => void;
@@ -11,7 +12,7 @@ export type RpgDataActions = {
     playerName: string;
     class?: string;
     race?: string;
-    level?: number;
+    level?: number | SavagePathfinderRank;
   }) => void;
   removeCharacter: (id: string) => void;
   addSession: (input: { title: string; scheduledAtIso: string }) => void;

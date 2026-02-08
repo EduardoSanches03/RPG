@@ -3,6 +3,7 @@ import type { Character, RpgDataV1, Session } from "../domain/rpg";
 import { RpgDataContext, type RpgDataActions } from "./RpgDataContext";
 import { useAuth } from "../contexts/AuthContext";
 import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
+import { defaultLevelForSystem } from "../domain/savagePathfinder";
 import {
   createSeedData,
   loadRpgData,
@@ -120,6 +121,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
           const now = newIsoNow();
           const id = input.id ?? newId();
           const exists = prev.characters.some((c) => c.id === id);
+          const prevLevel = prev.characters.find((c) => c.id === id)?.level;
           const nextChar: Character = {
             id,
             name: input.name.trim(),
@@ -136,8 +138,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
                 ? prev.characters.find((c) => c.id === id)?.race
                 : undefined),
             level:
-              input.level ??
-              (exists ? prev.characters.find((c) => c.id === id)?.level : 1),
+              input.level ?? prevLevel ?? defaultLevelForSystem(input.system),
             createdAtIso: input.id
               ? (prev.characters.find((c) => c.id === id)?.createdAtIso ?? now)
               : now,
