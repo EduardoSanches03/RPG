@@ -134,6 +134,9 @@ export type Session = {
   title: string;
   scheduledAtIso: string;
   createdAtIso: string;
+  address?: string;
+  campaignName?: string;
+  notes?: string;
 };
 
 export type RpgDataV1 = {

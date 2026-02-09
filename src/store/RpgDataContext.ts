@@ -15,7 +15,13 @@ export type RpgDataActions = {
     level?: number | SavagePathfinderRank;
   }) => void;
   removeCharacter: (id: string) => void;
-  addSession: (input: { title: string; scheduledAtIso: string }) => void;
+  addSession: (input: {
+    title: string;
+    scheduledAtIso: string;
+    address?: string;
+    campaignName?: string;
+    notes?: string;
+  }) => void;
   removeSession: (id: string) => void;
   setCampaignNotes: (notes: string) => void;
   resetToSeed: () => void;

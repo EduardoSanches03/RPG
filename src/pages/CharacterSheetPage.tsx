@@ -923,15 +923,78 @@ function ModuleHindrances(props: ModuleProps) {
         {hindrances.map((hindrance) => (
           <div key={hindrance.id} className="skill-row-container">
             <div className="skill-row">
-              <input
-                className="input skill-name-input"
-                placeholder="Nome da Complicação"
-                value={hindrance.name}
-                onChange={(e) =>
-                  updateHindrance(hindrance.id, { name: e.target.value })
-                }
-                style={{ paddingLeft: 8 }}
-              />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  flex: 1,
+                  background: "rgba(0, 0, 0, 0.1)",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border)",
+                  overflow: "hidden",
+                  height: "34px",
+                  marginRight: "8px",
+                }}
+              >
+                <select
+                  style={{
+                    width: "70px",
+                    padding: "0 4px",
+                    fontSize: "0.75rem",
+                    height: "100%",
+                    border: "none",
+                    background: "rgba(210, 59, 59, 0.15)",
+                    color: "var(--accent-2)",
+                    fontWeight: 700,
+                    outline: "none",
+                    cursor: "pointer",
+                    textAlign: "center",
+                    borderRight: "1px solid var(--border)",
+                  }}
+                  value={hindrance.type || ""}
+                  onChange={(e) =>
+                    updateHindrance(hindrance.id, {
+                      type: (e.target.value as "major" | "minor") || undefined,
+                    })
+                  }
+                >
+                  <option
+                    value=""
+                    style={{ background: "var(--bg)", color: "var(--text)" }}
+                  >
+                    TIPO
+                  </option>
+                  <option
+                    value="minor"
+                    style={{ background: "var(--bg)", color: "var(--text)" }}
+                  >
+                    MENOR
+                  </option>
+                  <option
+                    value="major"
+                    style={{ background: "var(--bg)", color: "var(--text)" }}
+                  >
+                    MAIOR
+                  </option>
+                </select>
+                <input
+                  placeholder="Nome da Complicação"
+                  value={hindrance.name}
+                  onChange={(e) =>
+                    updateHindrance(hindrance.id, { name: e.target.value })
+                  }
+                  style={{
+                    padding: "0 10px",
+                    flex: 1,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--text)",
+                    height: "100%",
+                    fontSize: "0.9rem",
+                    outline: "none",
+                  }}
+                />
+              </div>
               <div className="skill-actions">
                 <button
                   className={`skill-action-btn ${hindrance.notes ? "skill-action-btn--active" : ""}`}

@@ -171,6 +171,9 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
             id: newId(),
             title: input.title.trim(),
             scheduledAtIso: input.scheduledAtIso,
+            address: input.address?.trim(),
+            campaignName: input.campaignName?.trim(),
+            notes: input.notes?.trim(),
             createdAtIso: now,
           };
           return { ...prev, sessions: [nextSession, ...prev.sessions] };

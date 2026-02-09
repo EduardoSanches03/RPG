@@ -241,7 +241,11 @@ export function IconGrid(props: {
   );
 }
 
-export function IconUsers(props: { size?: number }) {
+export function IconUsers(props: {
+  size?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const size = props.size ?? 18;
   return (
     <svg
@@ -250,6 +254,8 @@ export function IconUsers(props: { size?: number }) {
       viewBox="0 0 24 24"
       role="presentation"
       xmlns="http://www.w3.org/2000/svg"
+      style={props.style}
+      className={props.className}
     >
       <path
         d="M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0Zm-12 9c0-3.3 3.6-5 8-5s8 1.7 8 5v1H4v-1Z"
@@ -259,7 +265,11 @@ export function IconUsers(props: { size?: number }) {
   );
 }
 
-export function IconCalendar(props: { size?: number }) {
+export function IconCalendar(props: {
+  size?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const size = props.size ?? 18;
   return (
     <svg
@@ -268,6 +278,8 @@ export function IconCalendar(props: { size?: number }) {
       viewBox="0 0 24 24"
       role="presentation"
       xmlns="http://www.w3.org/2000/svg"
+      style={props.style}
+      className={props.className}
     >
       <path
         d="M7 2h2v2h6V2h2v2h3v18H4V4h3V2Zm13 8H6v10h14V10ZM6 8h14V6H6v2Z"
@@ -277,7 +289,11 @@ export function IconCalendar(props: { size?: number }) {
   );
 }
 
-export function IconNotes(props: { size?: number }) {
+export function IconNotes(props: {
+  size?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const size = props.size ?? 18;
   return (
     <svg
@@ -286,6 +302,8 @@ export function IconNotes(props: { size?: number }) {
       viewBox="0 0 24 24"
       role="presentation"
       xmlns="http://www.w3.org/2000/svg"
+      style={props.style}
+      className={props.className}
     >
       <path
         d="M6 2h9l3 3v17H6V2Zm9 1.5V6h2.5L15 3.5ZM8 9h8v2H8V9Zm0 4h8v2H8v-2Zm0 4h6v2H8v-2Z"
@@ -295,7 +313,11 @@ export function IconNotes(props: { size?: number }) {
   );
 }
 
-export function IconCog(props: { size?: number }) {
+export function IconCog(props: {
+  size?: number;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   const size = props.size ?? 18;
   return (
     <svg
@@ -304,6 +326,8 @@ export function IconCog(props: { size?: number }) {
       viewBox="0 0 24 24"
       role="presentation"
       xmlns="http://www.w3.org/2000/svg"
+      style={props.style}
+      className={props.className}
     >
       <path
         d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.2-2-3.5-2.2.8a7.4 7.4 0 0 0-1.7-1L15.2 3h-6.4L8.5 6.1a7.4 7.4 0 0 0-1.7 1L4.6 6.3l-2 3.5L4.6 11a7.7 7.7 0 0 0 0 2l-2 1.2 2 3.5 2.2-.8c.5.4 1.1.8 1.7 1L8.8 21h6.4l.3-3.1c.6-.2 1.2-.6 1.7-1l2.2.8 2-3.5-2-1.2ZM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z"
@@ -724,6 +748,7 @@ export function IconBook(props: {
     >
       <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
       <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      <path d="M12 17v2" />
     </svg>
   );
 }
@@ -745,6 +770,54 @@ export function IconX(props: { size?: number; style?: React.CSSProperties }) {
       strokeLinejoin="round"
     >
       <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+export function IconMapPin(props: {
+  size?: number;
+  style?: React.CSSProperties;
+}) {
+  const size = props.size ?? 18;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={props.style}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  );
+}
+
+export function IconClock(props: {
+  size?: number;
+  style?: React.CSSProperties;
+}) {
+  const size = props.size ?? 18;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={props.style}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
     </svg>
   );
 }
