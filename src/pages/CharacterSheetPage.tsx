@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRpgData } from "../store/RpgDataContext";
 import {
   IconShield,
@@ -7,9 +7,6 @@ import {
   IconHeart,
   IconPlus,
   IconChevronLeft,
-  IconChevronRight,
-  IconChevronUp,
-  IconChevronDown,
   IconTrash,
   IconBubble,
   IconEdit,
@@ -25,6 +22,7 @@ import {
   IconMagic,
   IconX,
   IconBook,
+  IconMapPin,
 } from "../app/shell/icons";
 import type {
   Character,
@@ -162,12 +160,6 @@ type ModuleProps = {
   character: Character;
   moduleId: string;
   onRemove: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  onMoveLeft: () => void;
-  onMoveRight: () => void;
-  canMoveLeft: boolean;
-  canMoveRight: boolean;
   actions: {
     updateCharacterStats: (id: string, stats: Character["stats"]) => void;
     updateCharacterAttributes: (
@@ -181,6 +173,35 @@ type ModuleProps = {
     ) => void;
   };
 };
+
+type ModuleLayoutDraft = {
+  id: string;
+  type: CharacterModule["type"];
+  title?: string;
+  column: 0 | 1 | 2;
+  span: 1 | 2 | 3;
+  rowSpan: 1 | 2 | 3;
+};
+
+const moduleTypeLabels: Record<CharacterModule["type"], string> = {
+  combat_stats: "Combate",
+  attributes: "Atributos",
+  skills: "Perícias",
+  text_block: "Bloco de Texto",
+  hindrances: "COMPLICAÇÕES",
+  ancestral_abilities: "Hab. Ancestrais",
+  edges_advancements: "Vantagens e Progressos",
+  equipment: "Equipamento",
+  power_points: "Pontos de Poder",
+  powers: "Poderes",
+  weapons: "Armas",
+};
+
+function moduleDisplayName(module: Pick<CharacterModule, "type" | "title">) {
+  const customTitle = module.title?.trim();
+  if (customTitle) return customTitle;
+  return moduleTypeLabels[module.type];
+}
 
 function ModuleActions({
   isEditing,
@@ -197,91 +218,8 @@ function ModuleActions({
   module: CharacterModule;
   props: ModuleProps;
 }) {
-  const currentSpan = module.span || 1;
-  const toggleSpan = () => {
-    const nextSpan = currentSpan >= 3 ? 1 : ((currentSpan + 1) as 1 | 2 | 3);
-    props.actions.updateCharacterModule(props.character.id, module.id, {
-      span: nextSpan,
-    });
-  };
-
-  const currentRowSpan = module.rowSpan || 1;
-  const toggleRowSpan = () => {
-    const nextRowSpan =
-      currentRowSpan >= 3 ? 1 : ((currentRowSpan + 1) as 1 | 2 | 3);
-    props.actions.updateCharacterModule(props.character.id, module.id, {
-      rowSpan: nextRowSpan,
-    });
-  };
-
   return (
     <div className="module-actions">
-      {props.canMoveLeft && (
-        <button
-          className="module-action-btn"
-          onClick={props.onMoveLeft}
-          title="Mover para esquerda"
-        >
-          <IconChevronLeft size={14} />
-        </button>
-      )}
-      <button
-        className="module-action-btn"
-        onClick={props.onMoveUp}
-        title="Mover para cima"
-      >
-        <IconChevronUp size={14} />
-      </button>
-      <button
-        className="module-action-btn"
-        onClick={props.onMoveDown}
-        title="Mover para baixo"
-      >
-        <IconChevronDown size={14} />
-      </button>
-      {props.canMoveRight && (
-        <button
-          className="module-action-btn"
-          onClick={props.onMoveRight}
-          title="Mover para direita"
-        >
-          <IconChevronRight size={14} />
-        </button>
-      )}
-
-      <div style={{ width: 1, background: "var(--border)", margin: "0 4px" }} />
-
-      <button
-        className="module-action-btn"
-        onClick={toggleSpan}
-        title={`Largura: ${currentSpan} (Clique para alterar)`}
-      >
-        <IconGrid
-          size={14}
-          style={{
-            opacity: currentSpan > 1 ? 1 : 0.5,
-            color: currentSpan > 1 ? "var(--accent)" : "inherit",
-          }}
-        />
-      </button>
-
-      <button
-        className="module-action-btn"
-        onClick={toggleRowSpan}
-        title={`Altura: ${currentRowSpan} (Clique para alterar)`}
-      >
-        <IconGrid
-          size={14}
-          style={{
-            transform: "rotate(90deg)",
-            opacity: currentRowSpan > 1 ? 1 : 0.5,
-            color: currentRowSpan > 1 ? "var(--accent)" : "inherit",
-          }}
-        />
-      </button>
-
-      <div style={{ width: 1, background: "var(--border)", margin: "0 4px" }} />
-
       {setIsEditing && (
         <button
           className={`module-action-btn ${isEditing ? "module-action-btn--active" : ""}`}
@@ -306,6 +244,261 @@ function ModuleActions({
       >
         <IconTrash size={14} />
       </button>
+    </div>
+  );
+}
+
+function NotesModal(props: {
+  isOpen: boolean;
+  title: string;
+  placeholder: string;
+  value: string;
+  rows?: number;
+  onClose: () => void;
+  onChange: (value: string) => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const dragStartRef = useRef({
+    pointerId: -1,
+    lastPointerX: 0,
+    lastPointerY: 0,
+  });
+  const [isPinned, setIsPinned] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pinnedPosition, setPinnedPosition] = useState({ x: 16, y: 16 });
+  const isVisible = props.isOpen || isPinned;
+
+  function autoResizeTextarea(textarea: HTMLTextAreaElement) {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }
+
+  useEffect(() => {
+    if (!props.isOpen || isPinned) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (popoverRef.current && !popoverRef.current.contains(target)) {
+        props.onClose();
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [props.isOpen, props.onClose, isPinned]);
+
+  useEffect(() => {
+    if (!isVisible || !textareaRef.current) return;
+    const textarea = textareaRef.current;
+    autoResizeTextarea(textarea);
+  }, [isVisible, props.value]);
+
+  useEffect(() => {
+    if (!props.isOpen || isPinned || !popoverRef.current) return;
+    const popover = popoverRef.current;
+
+    function fitInsideViewport() {
+      popover.style.setProperty("--notes-shift-x", "0px");
+      const rect = popover.getBoundingClientRect();
+      const gutter = 10;
+      let shiftX = 0;
+
+      if (rect.right > window.innerWidth - gutter) {
+        shiftX -= rect.right - (window.innerWidth - gutter);
+      }
+      if (rect.left < gutter) {
+        shiftX += gutter - rect.left;
+      }
+
+      popover.style.setProperty("--notes-shift-x", `${shiftX}px`);
+    }
+
+    fitInsideViewport();
+    window.addEventListener("resize", fitInsideViewport);
+    window.addEventListener("scroll", fitInsideViewport, true);
+
+    return () => {
+      window.removeEventListener("resize", fitInsideViewport);
+      window.removeEventListener("scroll", fitInsideViewport, true);
+    };
+  }, [props.isOpen, isPinned]);
+
+  useEffect(() => {
+    if (!isPinned) return;
+
+    function clampPinnedPosition() {
+      const popover = popoverRef.current;
+      if (!popover) return;
+      const width = popover.offsetWidth;
+      const height = popover.offsetHeight;
+      const gutter = 8;
+      setPinnedPosition((current) => {
+        const x = Math.min(
+          Math.max(gutter, current.x),
+          Math.max(gutter, window.innerWidth - width - gutter),
+        );
+        const y = Math.min(
+          Math.max(gutter, current.y),
+          Math.max(gutter, window.innerHeight - height - gutter),
+        );
+        if (x === current.x && y === current.y) return current;
+        return { x, y };
+      });
+    }
+
+    clampPinnedPosition();
+    window.addEventListener("resize", clampPinnedPosition);
+    return () => window.removeEventListener("resize", clampPinnedPosition);
+  }, [isPinned]);
+
+  useEffect(() => {
+    if (!isPinned || !isDragging) return;
+
+    function clampToViewport(x: number, y: number) {
+      const popover = popoverRef.current;
+      if (!popover) return { x, y };
+      const width = popover.offsetWidth;
+      const height = popover.offsetHeight;
+      const gutter = 8;
+
+      const clampedX = Math.min(
+        Math.max(gutter, x),
+        Math.max(gutter, window.innerWidth - width - gutter),
+      );
+      const clampedY = Math.min(
+        Math.max(gutter, y),
+        Math.max(gutter, window.innerHeight - height - gutter),
+      );
+
+      return { x: clampedX, y: clampedY };
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      if (event.pointerId !== dragStartRef.current.pointerId) return;
+      event.preventDefault();
+      const deltaX = event.clientX - dragStartRef.current.lastPointerX;
+      const deltaY = event.clientY - dragStartRef.current.lastPointerY;
+
+      dragStartRef.current.lastPointerX = event.clientX;
+      dragStartRef.current.lastPointerY = event.clientY;
+
+      setPinnedPosition((current) => {
+        const next = clampToViewport(current.x + deltaX, current.y + deltaY);
+        if (next.x === current.x && next.y === current.y) return current;
+        return next;
+      });
+    }
+
+    function stopDrag(pointerId: number) {
+      if (pointerId !== dragStartRef.current.pointerId) return;
+      setIsDragging(false);
+      dragStartRef.current.pointerId = -1;
+    }
+
+    function handlePointerUp(event: PointerEvent) {
+      stopDrag(event.pointerId);
+    }
+
+    function handlePointerCancel(event: PointerEvent) {
+      stopDrag(event.pointerId);
+    }
+
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+
+    return () => {
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }, [isPinned, isDragging]);
+
+  function togglePinned() {
+    const nextPinned = !isPinned;
+    if (!nextPinned) {
+      setIsPinned(false);
+      setIsDragging(false);
+      return;
+    }
+
+    const popover = popoverRef.current;
+    if (popover) {
+      const rect = popover.getBoundingClientRect();
+      const gutter = 8;
+      const x = Math.min(
+        Math.max(gutter, rect.left),
+        Math.max(gutter, window.innerWidth - rect.width - gutter),
+      );
+      const y = Math.min(
+        Math.max(gutter, rect.top),
+        Math.max(gutter, window.innerHeight - rect.height - gutter),
+      );
+      setPinnedPosition({ x, y });
+    }
+
+    setIsPinned(true);
+  }
+
+  function startDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!isPinned || !popoverRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragStartRef.current = {
+      pointerId: event.pointerId,
+      lastPointerX: event.clientX,
+      lastPointerY: event.clientY,
+    };
+    setIsDragging(true);
+  }
+
+  if (!isVisible) return null;
+
+  return (
+    <div
+      className={`notes-popover ${isPinned ? "notes-popover--pinned" : ""} ${isDragging ? "notes-popover--dragging" : ""}`}
+      ref={popoverRef}
+      style={isPinned ? { left: pinnedPosition.x, top: pinnedPosition.y } : undefined}
+    >
+      <div className="notes-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="notes-modal__actions">
+          <button
+            type="button"
+            className={`notes-modal__action-btn notes-modal__action-btn--pin ${isPinned ? "notes-modal__action-btn--active" : ""}`}
+            onClick={togglePinned}
+            title={isPinned ? "Soltar nota" : "Fixar nota"}
+            aria-label={isPinned ? "Soltar nota" : "Fixar nota"}
+          >
+            <IconMapPin size={14} />
+          </button>
+          {isPinned && (
+            <button
+              type="button"
+              className="notes-modal__action-btn notes-modal__action-btn--drag"
+              onPointerDown={startDrag}
+              title="Arrastar nota"
+            >
+              Arrastar
+            </button>
+          )}
+        </div>
+        <textarea
+          ref={textareaRef}
+          className="input input--textarea notes-modal__textarea"
+          placeholder={props.placeholder}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          onInput={(e) => {
+            autoResizeTextarea(e.currentTarget);
+          }}
+          rows={props.rows ?? 4}
+          autoFocus
+        />
+      </div>
     </div>
   );
 }
@@ -357,22 +550,19 @@ function ModuleCombatStats(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações sobre este módulo..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações sobre este módulo..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -616,26 +806,26 @@ function ModuleAttributes(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações sobre este módulo..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações sobre este módulo..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
-          <span style={{ marginRight: 8, color: "var(--accent)" }}>✨</span>
+          <IconSparkles
+            size={16}
+            style={{ marginRight: 8, color: "var(--accent)" }}
+          />
           ATRIBUTOS
         </div>
       </div>
@@ -715,22 +905,19 @@ function ModuleSkills(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações gerais sobre as perícias..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações gerais sobre as perícias..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -786,20 +973,15 @@ function ModuleSkills(props: ModuleProps) {
               </div>
             </div>
 
-            {openSkillNoteId === skill.id && (
-              <div className="skill-note">
-                <textarea
-                  className="input input--textarea skill-note-input"
-                  placeholder={`Notas para ${skill.name || "esta perícia"}...`}
-                  value={skill.notes || ""}
-                  onChange={(e) =>
-                    updateSkill(skill.id, { notes: e.target.value })
-                  }
-                  rows={2}
-                  autoFocus
-                />
-              </div>
-            )}
+            <NotesModal
+              isOpen={openSkillNoteId === skill.id}
+              title={`Notas: ${skill.name || "Pericia"}`}
+              placeholder={`Notas para ${skill.name || "esta perícia"}...`}
+              value={skill.notes || ""}
+              rows={3}
+              onClose={() => setOpenSkillNoteId(null)}
+              onChange={(value) => updateSkill(skill.id, { notes: value })}
+            />
           </div>
         ))}
 
@@ -892,22 +1074,19 @@ function ModuleHindrances(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações gerais sobre as complicações..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações gerais sobre as COMPLICAÇÕES..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -1019,20 +1198,15 @@ function ModuleHindrances(props: ModuleProps) {
               </div>
             </div>
 
-            {openHindranceNoteId === hindrance.id && (
-              <div className="skill-note">
-                <textarea
-                  className="input input--textarea skill-note-input"
-                  placeholder={`Notas para ${hindrance.name || "esta complicação"}...`}
-                  value={hindrance.notes || ""}
-                  onChange={(e) =>
-                    updateHindrance(hindrance.id, { notes: e.target.value })
-                  }
-                  rows={2}
-                  autoFocus
-                />
-              </div>
-            )}
+            <NotesModal
+              isOpen={openHindranceNoteId === hindrance.id}
+              title={`Notas: ${hindrance.name || "Complicação"}`}
+              placeholder={`Notas para ${hindrance.name || "esta complicação"}...`}
+              value={hindrance.notes || ""}
+              rows={3}
+              onClose={() => setOpenHindranceNoteId(null)}
+              onChange={(value) => updateHindrance(hindrance.id, { notes: value })}
+            />
           </div>
         ))}
 
@@ -1102,22 +1276,19 @@ function ModuleAncestralAbilities(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações gerais sobre as habilidades ancestrais..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações gerais sobre as habilidades ancestrais..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -1164,20 +1335,15 @@ function ModuleAncestralAbilities(props: ModuleProps) {
               </div>
             </div>
 
-            {openAbilityNoteId === ability.id && (
-              <div className="skill-note">
-                <textarea
-                  className="input input--textarea skill-note-input"
-                  placeholder={`Notas para ${ability.name || "esta habilidade"}...`}
-                  value={ability.notes || ""}
-                  onChange={(e) =>
-                    updateAbility(ability.id, { notes: e.target.value })
-                  }
-                  rows={2}
-                  autoFocus
-                />
-              </div>
-            )}
+            <NotesModal
+              isOpen={openAbilityNoteId === ability.id}
+              title={`Notas: ${ability.name || "Habilidade"}`}
+              placeholder={`Notas para ${ability.name || "esta habilidade"}...`}
+              value={ability.notes || ""}
+              rows={3}
+              onClose={() => setOpenAbilityNoteId(null)}
+              onChange={(value) => updateAbility(ability.id, { notes: value })}
+            />
           </div>
         ))}
 
@@ -1290,22 +1456,19 @@ function ModuleEdgesAdvancements(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações gerais..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações gerais..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -1351,20 +1514,15 @@ function ModuleEdgesAdvancements(props: ModuleProps) {
               </div>
             </div>
 
-            {openEdgeNoteId === edge.id && (
-              <div className="skill-note">
-                <textarea
-                  className="input input--textarea skill-note-input"
-                  placeholder={`Notas para ${edge.name || "esta vantagem"}...`}
-                  value={edge.notes || ""}
-                  onChange={(e) =>
-                    updateEdge(edge.id, { notes: e.target.value })
-                  }
-                  rows={2}
-                  autoFocus
-                />
-              </div>
-            )}
+            <NotesModal
+              isOpen={openEdgeNoteId === edge.id}
+              title={`Notas: ${edge.name || "Vantagem"}`}
+              placeholder={`Notas para ${edge.name || "esta vantagem"}...`}
+              value={edge.notes || ""}
+              rows={3}
+              onClose={() => setOpenEdgeNoteId(null)}
+              onChange={(value) => updateEdge(edge.id, { notes: value })}
+            />
           </div>
         ))}
 
@@ -1408,20 +1566,15 @@ function ModuleEdgesAdvancements(props: ModuleProps) {
                 </div>
               </div>
 
-              {openAdvancementNoteId === slot.id && (
-                <div className="skill-note">
-                  <textarea
-                    className="input input--textarea skill-note-input"
-                    placeholder={`Notas para ${slot.label}...`}
-                    value={data.notes || ""}
-                    onChange={(e) =>
-                      updateAdvancement(slot.id, data.value, e.target.value)
-                    }
-                    rows={2}
-                    autoFocus
-                  />
-                </div>
-              )}
+              <NotesModal
+                isOpen={openAdvancementNoteId === slot.id}
+                title={`Notas: ${slot.label}`}
+                placeholder={`Notas para ${slot.label}...`}
+                value={data.notes || ""}
+                rows={3}
+                onClose={() => setOpenAdvancementNoteId(null)}
+                onChange={(value) => updateAdvancement(slot.id, data.value, value)}
+              />
             </div>
           );
         })}
@@ -1493,22 +1646,19 @@ function ModuleEquipment(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações gerais..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações gerais..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -1635,20 +1785,15 @@ function ModuleEquipment(props: ModuleProps) {
               </div>
             </div>
 
-            {openItemNoteId === item.id && (
-              <div className="skill-note" style={{ padding: "0 8px 8px 8px" }}>
-                <textarea
-                  className="input input--textarea skill-note-input"
-                  placeholder={`Notas para ${item.name || "este item"}...`}
-                  value={item.notes || ""}
-                  onChange={(e) =>
-                    updateItem(item.id, { notes: e.target.value })
-                  }
-                  rows={2}
-                  autoFocus
-                />
-              </div>
-            )}
+            <NotesModal
+              isOpen={openItemNoteId === item.id}
+              title={`Notas: ${item.name || "Item"}`}
+              placeholder={`Notas para ${item.name || "este item"}...`}
+              value={item.notes || ""}
+              rows={3}
+              onClose={() => setOpenItemNoteId(null)}
+              onChange={(value) => updateItem(item.id, { notes: value })}
+            />
           </div>
         ))}
 
@@ -1761,22 +1906,19 @@ function ModulePowerPoints(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -2006,22 +2148,19 @@ function ModulePowers(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -2206,22 +2345,19 @@ function ModuleWeapons(props: ModuleProps) {
         setIsNotesOpen={setIsNotesOpen}
       />
 
-      {isNotesOpen && (
-        <div className="module-notes">
-          <textarea
-            className="input input--textarea"
-            placeholder="Observações..."
-            value={module.notes || ""}
-            onChange={(e) =>
-              actions.updateCharacterModule(character.id, moduleId, {
-                notes: e.target.value,
-              })
-            }
-            rows={3}
-            autoFocus
-          />
-        </div>
-      )}
+      <NotesModal
+        isOpen={isNotesOpen}
+        title={`Notas: ${moduleDisplayName(module)}`}
+        placeholder="Observações..."
+        value={module.notes || ""}
+        rows={4}
+        onClose={() => setIsNotesOpen(false)}
+        onChange={(value) =>
+          actions.updateCharacterModule(character.id, moduleId, {
+            notes: value,
+          })
+        }
+      />
 
       <div className="section-header">
         <div className="section-title">
@@ -2424,6 +2560,10 @@ export function CharacterSheetPage() {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isStoryOpen, setIsStoryOpen] = useState(false);
   const [isReferenceOpen, setIsReferenceOpen] = useState(false);
+  const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
+  const [layoutDraft, setLayoutDraft] = useState<ModuleLayoutDraft[]>([]);
+  const [draggedModuleId, setDraggedModuleId] = useState<string | null>(null);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
 
   const character = data.characters.find((c) => c.id === id);
 
@@ -2433,9 +2573,186 @@ export function CharacterSheetPage() {
     }
   }, [character, id, navigate]);
 
+  useEffect(() => {
+    if (!isAddMenuOpen) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (addMenuRef.current && !addMenuRef.current.contains(target)) {
+        setIsAddMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsAddMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isAddMenuOpen]);
+
   if (!character) return null;
 
   const modules = character.modules || [];
+  const characterId = character.id;
+
+  function maxSpanForColumn(column: 0 | 1 | 2): 1 | 2 | 3 {
+    return (3 - column) as 1 | 2 | 3;
+  }
+
+  function normalizeDraftItem(item: ModuleLayoutDraft): ModuleLayoutDraft {
+    const column = Math.min(2, Math.max(0, item.column)) as 0 | 1 | 2;
+    const span = Math.min(
+      maxSpanForColumn(column),
+      Math.max(1, item.span),
+    ) as 1 | 2 | 3;
+    const rowSpan = Math.min(3, Math.max(1, item.rowSpan)) as 1 | 2 | 3;
+    return { ...item, column, span, rowSpan };
+  }
+
+  function openLayoutEditor() {
+    setLayoutDraft(
+      modules
+        .map((module) => ({
+          id: module.id,
+          type: module.type,
+          title: module.title,
+          column: module.column ?? 0,
+          span: module.span ?? 1,
+          rowSpan: module.rowSpan ?? 1,
+        }))
+        .map(normalizeDraftItem),
+    );
+    setDraggedModuleId(null);
+    setIsLayoutEditorOpen(true);
+  }
+
+  function closeLayoutEditor() {
+    setDraggedModuleId(null);
+    setIsLayoutEditorOpen(false);
+  }
+
+  function updateDraftModule(
+    moduleId: string,
+    updater: (item: ModuleLayoutDraft) => ModuleLayoutDraft,
+  ) {
+    setLayoutDraft((prev) =>
+      prev.map((item) =>
+        item.id === moduleId ? normalizeDraftItem(updater(item)) : item,
+      ),
+    );
+  }
+
+  function resizeDraftModule(
+    moduleId: string,
+    field: "span" | "rowSpan",
+    direction: "decrease" | "increase",
+  ) {
+    updateDraftModule(moduleId, (item) => {
+      const delta = direction === "increase" ? 1 : -1;
+      const current = field === "span" ? item.span : item.rowSpan;
+      const nextValue = Math.min(3, Math.max(1, current + delta)) as 1 | 2 | 3;
+      if (field === "span") return { ...item, span: nextValue };
+      return { ...item, rowSpan: nextValue };
+    });
+  }
+
+  function moveDraftModuleToColumnEnd(moduleId: string, column: 0 | 1 | 2) {
+    setLayoutDraft((prev) => {
+      const fromIndex = prev.findIndex((item) => item.id === moduleId);
+      if (fromIndex === -1) return prev;
+
+      const next = [...prev];
+      const [dragged] = next.splice(fromIndex, 1);
+      const updated = normalizeDraftItem({ ...dragged, column });
+      const lastInColumn = next.reduce(
+        (acc, item, idx) => (item.column === column ? idx : acc),
+        -1,
+      );
+      const insertAt = lastInColumn === -1 ? next.length : lastInColumn + 1;
+      next.splice(insertAt, 0, updated);
+      return next;
+    });
+  }
+
+  function reorderDraftModules(
+    sourceModuleId: string,
+    targetModuleId: string,
+    targetColumn: 0 | 1 | 2,
+  ) {
+    if (sourceModuleId === targetModuleId) return;
+
+    setLayoutDraft((prev) => {
+      const fromIndex = prev.findIndex((item) => item.id === sourceModuleId);
+      const targetIndex = prev.findIndex((item) => item.id === targetModuleId);
+      if (fromIndex === -1 || targetIndex === -1) return prev;
+
+      const next = [...prev];
+      const [dragged] = next.splice(fromIndex, 1);
+      const adjustedTargetIndex = next.findIndex(
+        (item) => item.id === targetModuleId,
+      );
+      if (adjustedTargetIndex === -1) return prev;
+
+      next.splice(
+        adjustedTargetIndex,
+        0,
+        normalizeDraftItem({ ...dragged, column: targetColumn }),
+      );
+      return next;
+    });
+  }
+
+  function getDraggedModuleId(event: React.DragEvent<HTMLElement>) {
+    const fromTransfer = event.dataTransfer.getData("text/plain");
+    return draggedModuleId || fromTransfer || null;
+  }
+
+  const previewModules = React.useMemo<CharacterModule[]>(() => {
+    if (!isLayoutEditorOpen) return modules;
+
+    const modulesById = new Map(modules.map((module) => [module.id, module]));
+    const preview: CharacterModule[] = [];
+    for (const item of layoutDraft) {
+      const baseModule = modulesById.get(item.id);
+      if (!baseModule) continue;
+      const normalized = normalizeDraftItem(item);
+      preview.push({
+        ...baseModule,
+        column: normalized.column,
+        span: normalized.span,
+        rowSpan: normalized.rowSpan,
+      });
+    }
+
+    const draftIds = new Set(layoutDraft.map((item) => item.id));
+    const missing = modules.filter((module) => !draftIds.has(module.id));
+    return [...preview, ...missing];
+  }, [isLayoutEditorOpen, layoutDraft, modules]);
+  const modulesForRender = isLayoutEditorOpen ? previewModules : modules;
+
+  function saveLayoutEditor() {
+    actions.setCharacterModulesLayout(
+      characterId,
+      layoutDraft.map((item) => {
+        const normalized = normalizeDraftItem(item);
+        return {
+          id: normalized.id,
+          column: normalized.column,
+          span: normalized.span,
+          rowSpan: normalized.rowSpan,
+        };
+      }),
+    );
+    closeLayoutEditor();
+  }
 
   function handleAddModule(
     type: CharacterModule["type"],
@@ -2452,6 +2769,18 @@ export function CharacterSheetPage() {
       ...defaultLayout,
     });
     setIsAddMenuOpen(false);
+  }
+
+  function hasModuleAdded(
+    type: CharacterModule["type"],
+    system: CharacterModule["system"],
+  ) {
+    if (!character) return false;
+    const normalizedSystem = system ?? "generic";
+    return character.modules.some(
+      (module) =>
+        module.type === type && (module.system ?? "generic") === normalizedSystem,
+    );
   }
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -2512,7 +2841,7 @@ export function CharacterSheetPage() {
               cursor: "pointer",
               color: "var(--accent)",
               boxShadow: "-2px 0 10px rgba(0,0,0,0.5)",
-              zIndex: 10,
+              zIndex: 2,
               gap: 8,
               padding: "12px 0",
             }}
@@ -2569,6 +2898,15 @@ export function CharacterSheetPage() {
             <h1 className="char-header__name">{character.name}</h1>
             <button
               className="button button--ghost"
+              onClick={openLayoutEditor}
+              title="Organizar layout dos módulos"
+              style={{ marginLeft: "auto", marginRight: 8 }}
+            >
+              <IconGrid size={20} style={{ marginRight: 8 }} />
+              Organizar Layout
+            </button>
+            <button
+              className="button button--ghost"
               onClick={() => setIsStoryOpen(true)}
               title="História do Personagem"
             >
@@ -2578,7 +2916,7 @@ export function CharacterSheetPage() {
           </div>
           <div className="char-header__meta">
             <IconSword size={14} style={{ color: "var(--accent)" }} />
-            {character.race || "Raça"} {character.class || "Classe"} • Nível{" "}
+            {character.race || "Raça"} {character.class || "Classe"} - Nível{" "}
             {formatLevel(character.system, character.level)}
           </div>
         </div>
@@ -2637,24 +2975,259 @@ export function CharacterSheetPage() {
       )}
 
       {/* Grid de Módulos */}
+      {isLayoutEditorOpen && (
+        <div className="modal-overlay" onClick={closeLayoutEditor}>
+          <div
+            className="modal-content layout-modal-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                  fontWeight: 800,
+                  color: "var(--accent)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <IconGrid size={20} />
+                ORGANIZAR MÓDULOS
+              </h3>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="button button--ghost" onClick={closeLayoutEditor}>
+                  Cancelar
+                </button>
+                <button className="button" onClick={saveLayoutEditor}>
+                  Salvar Layout
+                </button>
+              </div>
+            </div>
+
+            <p className="layout-editor-help">
+              Arraste os cards para mudar a ordem e ajuste coluna, largura e altura.
+            </p>
+
+            <div className="layout-editor-workspace">
+              <div className="layout-editor-grid">
+                {([0, 1, 2] as const).map((column) => {
+                  const columnModules = layoutDraft.filter(
+                    (module) => module.column === column,
+                  );
+                  const firstModuleId = columnModules[0]?.id;
+
+                  return (
+                    <div
+                      key={column}
+                      className="layout-editor-column"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (e.target !== e.currentTarget) return;
+                        const sourceId = getDraggedModuleId(e);
+                        if (!sourceId) return;
+                        moveDraftModuleToColumnEnd(sourceId, column);
+                        setDraggedModuleId(null);
+                      }}
+                    >
+                      <div className="layout-editor-column__title">Coluna {column + 1}</div>
+                      <div className="layout-editor-list">
+                        {firstModuleId && (
+                          <div
+                            className="layout-drop-slot"
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const sourceId = getDraggedModuleId(e);
+                              if (!sourceId) return;
+                              reorderDraftModules(sourceId, firstModuleId, column);
+                              setDraggedModuleId(null);
+                            }}
+                          />
+                        )}
+
+                        {columnModules.map((module, index) => {
+                          const nextModuleId = columnModules[index + 1]?.id;
+
+                          return (
+                            <React.Fragment key={module.id}>
+                              <div
+                                className={`layout-editor-item ${draggedModuleId === module.id ? "layout-editor-item--dragging" : ""}`}
+                                draggable
+                                onDragStart={(e) => {
+                                  setDraggedModuleId(module.id);
+                                  e.dataTransfer.effectAllowed = "move";
+                                  e.dataTransfer.setData("text/plain", module.id);
+                                }}
+                                onDragEnd={() => setDraggedModuleId(null)}
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const sourceId = getDraggedModuleId(e);
+                                  if (!sourceId) return;
+
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const isTopHalf = e.clientY < rect.top + rect.height / 2;
+
+                                  if (isTopHalf) {
+                                    reorderDraftModules(sourceId, module.id, column);
+                                  } else if (nextModuleId) {
+                                    reorderDraftModules(sourceId, nextModuleId, column);
+                                  } else {
+                                    moveDraftModuleToColumnEnd(sourceId, column);
+                                  }
+
+                                  setDraggedModuleId(null);
+                                }}
+                              >
+                                <div className="layout-editor-item__head">
+                                  <span className="layout-editor-item__name">
+                                    {moduleDisplayName(module)}
+                                  </span>
+                                  <span className="layout-editor-item__meta">
+                                    L{module.span} x A{module.rowSpan}
+                                  </span>
+                                </div>
+
+                                <div className="layout-editor-controls">
+                                  <div className="layout-editor-control">
+                                    <span>Largura</span>
+                                    <div className="layout-editor-btns">
+                                      <button
+                                        className="layout-editor-btn"
+                                        onClick={() =>
+                                          resizeDraftModule(module.id, "span", "decrease")
+                                        }
+                                        disabled={module.span <= 1}
+                                      >
+                                        -
+                                      </button>
+                                      <button
+                                        className="layout-editor-btn"
+                                        onClick={() =>
+                                          resizeDraftModule(module.id, "span", "increase")
+                                        }
+                                        disabled={
+                                          module.span >= maxSpanForColumn(module.column)
+                                        }
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="layout-editor-control">
+                                    <span>Altura</span>
+                                    <div className="layout-editor-btns">
+                                      <button
+                                        className="layout-editor-btn"
+                                        onClick={() =>
+                                          resizeDraftModule(module.id, "rowSpan", "decrease")
+                                        }
+                                        disabled={module.rowSpan <= 1}
+                                      >
+                                        -
+                                      </button>
+                                      <button
+                                        className="layout-editor-btn"
+                                        onClick={() =>
+                                          resizeDraftModule(module.id, "rowSpan", "increase")
+                                        }
+                                        disabled={module.rowSpan >= 3}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="layout-drop-slot"
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const sourceId = getDraggedModuleId(e);
+                                  if (!sourceId) return;
+                                  if (nextModuleId) {
+                                    reorderDraftModules(sourceId, nextModuleId, column);
+                                  } else {
+                                    moveDraftModuleToColumnEnd(sourceId, column);
+                                  }
+                                  setDraggedModuleId(null);
+                                }}
+                              />
+                            </React.Fragment>
+                          );
+                        })}
+
+                        {columnModules.length === 0 && (
+                          <div
+                            className="layout-editor-empty"
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const sourceId = getDraggedModuleId(e);
+                              if (!sourceId) return;
+                              moveDraftModuleToColumnEnd(sourceId, column);
+                              setDraggedModuleId(null);
+                            }}
+                          >
+                            Solte modulos aqui
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="layout-preview-panel">
+                <div className="layout-preview-panel__title">Pre-visualizacao em tempo real</div>
+                <div className="layout-preview-grid">
+                  {previewModules.map((module) => {
+                    const column = module.column ?? 0;
+                    const span = module.span ?? 1;
+                    const rowSpan = module.rowSpan ?? 1;
+                    return (
+                      <div
+                        key={module.id}
+                        className="layout-preview-card"
+                        style={{
+                          gridColumnStart: column + 1,
+                          gridColumnEnd: `span ${span}`,
+                          gridRowEnd: `span ${rowSpan}`,
+                        }}
+                      >
+                        <div className="layout-preview-card__name">
+                          {moduleDisplayName(module)}
+                        </div>
+                        <div className="layout-preview-card__meta">
+                          Coluna {column + 1} | L{span} x A{rowSpan}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="modules-grid">
-        {modules.map((mod) => {
-          const colIndex = mod.column ?? 0;
+        {modulesForRender.map((mod) => {
           const props: ModuleProps = {
             character,
             moduleId: mod.id,
             actions,
             onRemove: () => actions.removeCharacterModule(character.id, mod.id),
-            onMoveUp: () =>
-              actions.reorderCharacterModule(character.id, mod.id, "up"),
-            onMoveDown: () =>
-              actions.reorderCharacterModule(character.id, mod.id, "down"),
-            onMoveLeft: () =>
-              actions.moveCharacterModuleColumn(character.id, mod.id, "left"),
-            onMoveRight: () =>
-              actions.moveCharacterModuleColumn(character.id, mod.id, "right"),
-            canMoveLeft: colIndex > 0,
-            canMoveRight: colIndex < 2,
           };
 
           if (mod.type === "combat_stats")
@@ -2683,7 +3256,7 @@ export function CharacterSheetPage() {
 
       {/* Floating Menu */}
       <div className="floating-dock">
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }} ref={addMenuRef}>
           <button
             className="dock-btn"
             onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
@@ -2697,90 +3270,140 @@ export function CharacterSheetPage() {
               <div className="add-menu__section">
                 <div className="add-menu__title">Savage Pathfinder</div>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("combat_stats", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("combat_stats", "savage_pathfinder")
                   }
                 >
-                  <IconShield size={14} style={{ marginRight: 8 }} />
-                  Combate
+                  <span className="add-menu__item-main">
+                    <IconShield size={14} style={{ marginRight: 8 }} />
+                    Combate
+                  </span>
+                  {hasModuleAdded("combat_stats", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("attributes", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("attributes", "savage_pathfinder")
                   }
                 >
-                  <span style={{ marginRight: 8 }}>✨</span>
-                  Atributos
+                  <span className="add-menu__item-main">
+                    <IconSparkles size={14} style={{ marginRight: 8 }} />
+                    Atributos
+                  </span>
+                  {hasModuleAdded("attributes", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("skills", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() => handleAddModule("skills", "savage_pathfinder")}
                 >
-                  <IconScroll size={14} style={{ marginRight: 8 }} />
-                  Perícias
+                  <span className="add-menu__item-main">
+                    <IconScroll size={14} style={{ marginRight: 8 }} />
+                    Perícias
+                  </span>
+                  {hasModuleAdded("skills", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("hindrances", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("hindrances", "savage_pathfinder")
                   }
                 >
-                  <IconSkull size={14} style={{ marginRight: 8 }} />
-                  Complicações
+                  <span className="add-menu__item-main">
+                    <IconSkull size={14} style={{ marginRight: 8 }} />
+                    COMPLICAÇÕES
+                  </span>
+                  {hasModuleAdded("hindrances", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("ancestral_abilities", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("ancestral_abilities", "savage_pathfinder")
                   }
                 >
-                  <IconSparkles size={14} style={{ marginRight: 8 }} />
-                  Hab. Ancestrais
+                  <span className="add-menu__item-main">
+                    <IconSparkles size={14} style={{ marginRight: 8 }} />
+                    Hab. Ancestrais
+                  </span>
+                  {hasModuleAdded("ancestral_abilities", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("edges_advancements", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("edges_advancements", "savage_pathfinder")
                   }
                 >
-                  <IconStar size={14} style={{ marginRight: 8 }} />
-                  Vantagens e Progressos
+                  <span className="add-menu__item-main">
+                    <IconStar size={14} style={{ marginRight: 8 }} />
+                    Vantagens e Progressos
+                  </span>
+                  {hasModuleAdded("edges_advancements", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("equipment", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("equipment", "savage_pathfinder")
                   }
                 >
-                  <IconBackpack size={14} style={{ marginRight: 8 }} />
-                  Equipamento
+                  <span className="add-menu__item-main">
+                    <IconBackpack size={14} style={{ marginRight: 8 }} />
+                    Equipamento
+                  </span>
+                  {hasModuleAdded("equipment", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("power_points", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("power_points", "savage_pathfinder")
                   }
                 >
-                  <IconBolt size={14} style={{ marginRight: 8 }} />
-                  Pontos de Poder
+                  <span className="add-menu__item-main">
+                    <IconBolt size={14} style={{ marginRight: 8 }} />
+                    Pontos de Poder
+                  </span>
+                  {hasModuleAdded("power_points", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("powers", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() => handleAddModule("powers", "savage_pathfinder")}
                 >
-                  <IconMagic size={14} style={{ marginRight: 8 }} />
-                  Poderes
+                  <span className="add-menu__item-main">
+                    <IconMagic size={14} style={{ marginRight: 8 }} />
+                    Poderes
+                  </span>
+                  {hasModuleAdded("powers", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
                 <button
-                  className="add-menu__item"
+                  className={`add-menu__item ${hasModuleAdded("weapons", "savage_pathfinder") ? "add-menu__item--added" : ""}`}
                   onClick={() =>
                     handleAddModule("weapons", "savage_pathfinder")
                   }
                 >
-                  <IconSword size={14} style={{ marginRight: 8 }} />
-                  Armas
+                  <span className="add-menu__item-main">
+                    <IconSword size={14} style={{ marginRight: 8 }} />
+                    Armas
+                  </span>
+                  {hasModuleAdded("weapons", "savage_pathfinder") && (
+                    <span className="add-menu__tag">Adicionado</span>
+                  )}
                 </button>
               </div>
 
@@ -2815,6 +3438,9 @@ export function CharacterSheetPage() {
           gap: 16px;
           align-items: start;
           grid-auto-flow: dense;
+        }
+        .modules-grid .card {
+          overflow: visible;
         }
         @media (max-width: 900px) {
           .modules-grid {
@@ -2890,6 +3516,215 @@ export function CharacterSheetPage() {
           align-items: center;
           margin-bottom: 16px;
         }
+        .layout-modal-content {
+          width: 97vw;
+          max-width: 1240px;
+        }
+        .layout-editor-help {
+          margin: 0 0 16px 0;
+          color: var(--muted);
+          font-size: 13px;
+        }
+        .layout-editor-workspace {
+          display: grid;
+          grid-template-columns: minmax(700px, 1fr) minmax(420px, 1fr);
+          gap: 14px;
+          align-items: start;
+        }
+        .layout-editor-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(210px, 1fr));
+          gap: 12px;
+          max-height: 68vh;
+          overflow: auto;
+          padding-right: 4px;
+          min-width: 0;
+        }
+        .layout-editor-column {
+          border: 1px dashed var(--border);
+          border-radius: 10px;
+          background: rgba(255,255,255,0.02);
+          min-height: 180px;
+          padding: 10px;
+          min-width: 210px;
+        }
+        .layout-editor-column__title {
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          font-weight: 700;
+          color: var(--muted);
+          margin-bottom: 8px;
+        }
+        .layout-editor-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .layout-drop-slot {
+          height: 12px;
+          border: 1px dashed transparent;
+          border-radius: 6px;
+          transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .layout-drop-slot:hover {
+          border-color: rgba(255, 183, 77, 0.55);
+          background: rgba(255, 183, 77, 0.12);
+        }
+        .layout-editor-item {
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 10px;
+          background: rgba(0,0,0,0.25);
+          cursor: grab;
+          overflow: hidden;
+        }
+        .layout-editor-item:active {
+          cursor: grabbing;
+        }
+        .layout-editor-item--dragging {
+          opacity: 0.45;
+        }
+        .layout-editor-item__head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .layout-editor-item__name {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text);
+        }
+        .layout-editor-item__meta {
+          font-size: 11px;
+          color: var(--muted);
+        }
+        .layout-editor-controls {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .layout-editor-control {
+          display: grid;
+          grid-template-columns: 70px minmax(0, 1fr);
+          justify-content: initial;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          color: var(--muted);
+        }
+        .layout-editor-btns {
+          display: flex;
+          gap: 4px;
+          justify-content: flex-end;
+          min-width: 0;
+        }
+        .layout-editor-btn {
+          min-width: 28px;
+          width: 28px;
+          height: 24px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          background: rgba(255,255,255,0.04);
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-weight: 700;
+        }
+        .layout-editor-btn:disabled {
+          opacity: 0.35;
+          cursor: not-allowed;
+        }
+        .layout-editor-btn:not(:disabled):hover {
+          border-color: var(--accent);
+          color: var(--accent);
+        }
+        .layout-editor-empty {
+          min-height: 78px;
+          border: 1px dashed var(--border);
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--muted);
+          font-size: 12px;
+        }
+
+        .layout-preview-panel {
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: rgba(255,255,255,0.02);
+          padding: 12px;
+          max-height: 68vh;
+          overflow: auto;
+        }
+        .layout-preview-panel__title {
+          font-size: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.8px;
+          color: var(--muted);
+          margin-bottom: 10px;
+        }
+        .layout-preview-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          grid-auto-flow: dense;
+          min-height: 420px;
+        }
+        .layout-preview-card {
+          border: 1px solid rgba(255, 183, 77, 0.25);
+          background: linear-gradient(
+            150deg,
+            rgba(255, 183, 77, 0.14),
+            rgba(255, 183, 77, 0.05)
+          );
+          border-radius: 10px;
+          padding: 10px;
+          min-height: 86px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+        .layout-preview-card__name {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text);
+        }
+        .layout-preview-card__meta {
+          font-size: 11px;
+          color: var(--muted);
+        }
+        @media (max-width: 1380px) {
+          .layout-editor-workspace {
+            grid-template-columns: 1fr;
+          }
+          .layout-preview-panel {
+            max-height: none;
+          }
+        }
+        @media (max-width: 980px) {
+          .layout-modal-content {
+            width: 96vw;
+            max-height: 88vh;
+            overflow-y: auto;
+          }
+          .layout-editor-grid {
+            grid-template-columns: repeat(3, minmax(190px, 1fr));
+            max-height: 56vh;
+          }
+          .layout-editor-column {
+            min-width: 190px;
+          }
+          .layout-preview-grid {
+            grid-template-columns: 1fr;
+          }
+        }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
         .char-header__info {
@@ -2954,14 +3789,122 @@ export function CharacterSheetPage() {
           color: white;
         }
 
-        .module-notes {
-          padding: 0 16px 16px 16px;
-          border-bottom: 1px solid var(--border);
-          margin-bottom: 16px;
-          animation: slideDown 0.2s ease-out;
+        .notes-popover {
+          position: absolute;
+          right: 8px;
+          bottom: calc(100% + 10px);
+          width: min(560px, calc(100vw - 24px));
+          z-index: 3000;
+          --notes-shift-x: 0px;
+          transform: translateX(var(--notes-shift-x));
         }
-        @keyframes slideDown {
-          from { opacity: 0; transform: translateY(-10px); }
+        .notes-popover--pinned {
+          position: fixed;
+          right: auto;
+          bottom: auto;
+          transform: none;
+          width: min(560px, calc(100vw - 16px));
+          max-height: calc(100vh - 16px);
+        }
+        .notes-popover--dragging {
+          cursor: grabbing;
+          user-select: none;
+        }
+        .notes-modal {
+          width: 100%;
+          background: linear-gradient(180deg, rgba(24, 24, 30, 0.98), rgba(14, 14, 20, 0.98));
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-left: 3px solid var(--accent);
+          border-radius: 12px;
+          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.46);
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+          animation: noteLift 0.16s ease-out;
+        }
+        .notes-modal::after {
+          content: "";
+          position: absolute;
+          right: 22px;
+          top: 100%;
+          width: 12px;
+          height: 12px;
+          background: #14141b;
+          border-right: 1px solid rgba(255, 255, 255, 0.12);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          transform: rotate(45deg);
+        }
+        .notes-popover--pinned .notes-modal::after {
+          display: none;
+        }
+        .notes-modal__actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .notes-modal__action-btn {
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--muted);
+          border-radius: 8px;
+          padding: 4px 10px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .notes-modal__action-btn--pin {
+          width: 30px;
+          height: 30px;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .notes-modal__action-btn:hover {
+          color: var(--text);
+          border-color: rgba(255, 255, 255, 0.26);
+        }
+        .notes-modal__action-btn--active {
+          color: var(--accent);
+          border-color: rgba(255, 183, 77, 0.42);
+          background: rgba(255, 183, 77, 0.1);
+        }
+        .notes-modal__action-btn--drag {
+          cursor: grab;
+          touch-action: none;
+        }
+        .notes-popover--dragging .notes-modal__action-btn--drag {
+          cursor: grabbing;
+        }
+        .notes-modal__textarea {
+          min-height: 120px;
+          font-size: 15px;
+          line-height: 1.55;
+          padding: 8px 10px;
+          border: none;
+          background: transparent;
+          color: var(--text);
+          box-shadow: none;
+          overflow: hidden;
+          resize: none;
+        }
+        @media (max-width: 720px) {
+          .notes-popover {
+            width: min(calc(100vw - 18px), 560px);
+            right: 4px;
+            bottom: calc(100% + 8px);
+          }
+          .notes-popover--pinned {
+            width: min(calc(100vw - 12px), 560px);
+          }
+          .notes-modal__textarea {
+            min-height: 100px;
+          }
+        }
+        @keyframes noteLift {
+          from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
         }
         .input--textarea {
@@ -2974,8 +3917,21 @@ export function CharacterSheetPage() {
           font-family: inherit;
           font-size: 13px;
         }
+        .notes-modal .input--textarea {
+          background: transparent;
+          border: none;
+          padding: 8px 10px;
+          font-size: 15px;
+          color: var(--text);
+          resize: none;
+          overflow: hidden;
+        }
         .input--textarea:focus {
           border-color: var(--accent);
+          outline: none;
+        }
+        .notes-modal .input--textarea:focus {
+          border-color: transparent;
           outline: none;
         }
 
@@ -3153,11 +4109,12 @@ export function CharacterSheetPage() {
           bottom: 100%;
           left: 0;
           margin-bottom: 10px;
-          background: var(--panel);
-          border: 1px solid var(--border);
+          background: linear-gradient(180deg, rgba(24, 24, 30, 0.94), rgba(14, 14, 20, 0.94));
+          border: 1px solid rgba(255, 255, 255, 0.12);
           border-radius: 12px;
-          width: 200px;
-          box-shadow: var(--shadow);
+          width: 280px;
+          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.44);
+          backdrop-filter: blur(8px);
           overflow: hidden;
           animation: slideUp 0.2s ease-out;
         }
@@ -3167,7 +4124,7 @@ export function CharacterSheetPage() {
         }
         .add-menu__section {
           padding: 8px 0;
-          border-bottom: 1px solid var(--border);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
         .add-menu__section:last-child {
           border-bottom: none;
@@ -3182,6 +4139,7 @@ export function CharacterSheetPage() {
         .add-menu__item {
           display: flex;
           align-items: center;
+          justify-content: space-between;
           width: 100%;
           background: none;
           border: none;
@@ -3192,7 +4150,28 @@ export function CharacterSheetPage() {
           text-align: left;
         }
         .add-menu__item:hover {
-          background: rgba(255,255,255,0.05);
+          background: rgba(255,255,255,0.06);
+        }
+        .add-menu__item-main {
+          display: flex;
+          align-items: center;
+          min-width: 0;
+        }
+        .add-menu__item--added {
+          color: #f1f1f1;
+        }
+        .add-menu__tag {
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.2px;
+          text-transform: uppercase;
+          color: var(--accent);
+          background: rgba(255, 183, 77, 0.15);
+          border: 1px solid rgba(255, 183, 77, 0.3);
+          border-radius: 999px;
+          padding: 2px 7px;
+          line-height: 1;
+          flex-shrink: 0;
         }
         .add-menu__item:disabled {
           cursor: not-allowed;
@@ -3292,7 +4271,8 @@ export function CharacterSheetPage() {
           background: rgba(0,0,0,0.2);
           border: 1px solid var(--border);
           border-radius: 8px;
-          overflow: hidden;
+          overflow: visible;
+          position: relative;
         }
         .skill-row {
           display: flex;
@@ -3377,15 +4357,6 @@ export function CharacterSheetPage() {
         .skill-action-btn--danger:hover {
           background: rgba(255, 77, 77, 0.1);
         }
-        .skill-note {
-          padding: 0 8px 8px 8px;
-          animation: slideDown 0.2s ease-out;
-        }
-        .skill-note-input {
-          font-size: 12px;
-          min-height: 40px;
-        }
-
         .text-block-container {
           padding: 0 4px;
         }
@@ -3411,6 +4382,7 @@ export function CharacterSheetPage() {
 
         .advancement-row-container {
           margin-bottom: 0;
+          position: relative;
         }
         .advancement-row {
           display: flex;

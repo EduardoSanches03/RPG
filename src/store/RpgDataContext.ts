@@ -57,6 +57,15 @@ export type RpgDataActions = {
     moduleId: string,
     direction: "left" | "right",
   ) => void;
+  setCharacterModulesLayout: (
+    charId: string,
+    layout: Array<{
+      id: string;
+      column: 0 | 1 | 2;
+      span: 1 | 2 | 3;
+      rowSpan: 1 | 2 | 3;
+    }>,
+  ) => void;
   removeCharacterModule: (charId: string, moduleId: string) => void;
 };
 

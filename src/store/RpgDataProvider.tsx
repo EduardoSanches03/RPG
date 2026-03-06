@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Character, RpgDataV1, Session } from "../domain/rpg";
+import type { Character, CharacterModule, RpgDataV1, Session } from "../domain/rpg";
 import { RpgDataContext, type RpgDataActions } from "./RpgDataContext";
 import { useAuth } from "../contexts/AuthContext";
 import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
@@ -83,6 +83,14 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
   }, []);
 
   const actions = useMemo<RpgDataActions>(() => {
+    function normalizeModuleLayout(module: CharacterModule): CharacterModule {
+      const column = Math.min(2, Math.max(0, module.column ?? 0)) as 0 | 1 | 2;
+      const maxSpan = (3 - column) as 1 | 2 | 3;
+      const span = Math.min(maxSpan, Math.max(1, module.span ?? 1)) as 1 | 2 | 3;
+      const rowSpan = Math.min(3, Math.max(1, module.rowSpan ?? 1)) as 1 | 2 | 3;
+      return { ...module, column, span, rowSpan };
+    }
+
     function commit(updater: (prev: RpgDataV1) => RpgDataV1) {
       setData((prev) => {
         const next = updater(prev);
@@ -229,7 +237,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
                   ...c,
                   modules: [
                     ...(c.modules || []),
-                    {
+                    normalizeModuleLayout({
                       id: newId(),
                       type: module.type,
                       system: module.system,
@@ -237,7 +245,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
                       span: module.span,
                       rowSpan: module.rowSpan,
                       column: module.column,
-                    },
+                    }),
                   ],
                 }
               : c,
@@ -252,7 +260,9 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
               ? {
                   ...c,
                   modules: (c.modules || []).map((m) =>
-                    m.id === moduleId ? { ...m, ...updates } : m,
+                    m.id === moduleId
+                      ? normalizeModuleLayout({ ...m, ...updates })
+                      : m,
                   ),
                 }
               : c,
@@ -326,6 +336,42 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
                 }
               : c,
           ),
+        }));
+      },
+      setCharacterModulesLayout(charId, layout) {
+        commit((prev) => ({
+          ...prev,
+          characters: prev.characters.map((c) => {
+            if (c.id !== charId) return c;
+
+            const modules = c.modules || [];
+            const layoutById = new Map(layout.map((item) => [item.id, item]));
+            const modulesById = new Map(modules.map((module) => [module.id, module]));
+
+            const ordered = layout
+              .map((item) => modulesById.get(item.id))
+              .filter((module): module is (typeof modules)[number] => Boolean(module));
+
+            const missing = modules.filter(
+              (module) => !layoutById.has(module.id),
+            );
+
+            const nextModules = [...ordered, ...missing].map((module) => {
+              const nextLayout = layoutById.get(module.id);
+              if (!nextLayout) return module;
+              return {
+                ...module,
+                column: nextLayout.column,
+                span: nextLayout.span,
+                rowSpan: nextLayout.rowSpan,
+              };
+            });
+
+            return {
+              ...c,
+              modules: nextModules.map((module) => normalizeModuleLayout(module)),
+            };
+          }),
         }));
       },
     };
