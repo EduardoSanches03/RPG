@@ -7,6 +7,11 @@ export type Campaign = {
   name: string;
   system: string;
   createdAtIso: string;
+  role?: "mestre" | "jogador";
+  locale?: string;
+  timeZone?: string;
+  isRegistered?: boolean;
+  partyMemberIds?: RpgId[];
 };
 
 export type CharacterStats = {
@@ -120,6 +125,11 @@ export type Character = {
   playerName: string;
   class?: string;
   race?: string;
+  ancestry?: string;
+  height?: string;
+  weight?: string;
+  edges?: number;
+  conviction?: number;
   level?: number | SavagePathfinderRank;
   stats?: CharacterStats;
   attributes?: CharacterAttributes;
@@ -139,6 +149,43 @@ export type Session = {
   notes?: string;
 };
 
+export type SocialStatus = "online" | "in_party" | "offline";
+
+export type SocialFriend = {
+  id: RpgId;
+  name: string;
+  status: SocialStatus;
+  activity?: string;
+  avatarUrl?: string;
+};
+
+export type SocialGroup = {
+  id: RpgId;
+  name: string;
+  role: "owner" | "member";
+  membersCount: number;
+  onlineCount: number;
+  system?: string;
+};
+
+export type SocialDirectoryUser = {
+  id: RpgId;
+  name: string;
+  handle: string;
+  status?: SocialStatus;
+  bio?: string;
+  avatarUrl?: string;
+};
+
+export type SocialFriendRequest = {
+  id: RpgId;
+  name: string;
+  handle?: string;
+  avatarUrl?: string;
+  sentAtIso: string;
+  status: "pending";
+};
+
 export type RpgDataV1 = {
   version: 1;
   campaign: Campaign;
@@ -146,5 +193,11 @@ export type RpgDataV1 = {
   sessions: Session[];
   notes: {
     campaign: string;
+  };
+  social?: {
+    friends: SocialFriend[];
+    groups: SocialGroup[];
+    directory?: SocialDirectoryUser[];
+    requestsSent?: SocialFriendRequest[];
   };
 };

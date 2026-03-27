@@ -19,21 +19,46 @@ export function AuthProvider(props: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) {
+      setIsLoading(false);
+      return;
+    }
+    const client = supabase;
 
-    supabase.auth
-      .getSession()
-      .then(({ data, error }) => {
-        if (error) throw error;
-        setSession(data.session ?? null);
+    let isCancelled = false;
+    const timeoutMs = 5000;
+
+    void Promise.race([
+      client.auth.getSession(),
+      new Promise<never>((_, reject) =>
+        window.setTimeout(
+          () => reject(new Error("Tempo limite ao consultar sessao")),
+          timeoutMs,
+        ),
+      ),
+    ])
+      .then((result) => {
+        const response = result as Awaited<ReturnType<typeof client.auth.getSession>>;
+        if (isCancelled) return;
+        if (response.error) throw response.error;
+        setSession(response.data.session ?? null);
       })
-      .finally(() => setIsLoading(false));
+      .catch(() => {
+        if (isCancelled) return;
+        setSession(null);
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false);
+      });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => {
+    const { data } = client.auth.onAuthStateChange((_event, next) => {
       setSession(next);
     });
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      isCancelled = true;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   const value = useMemo<AuthContextValue>(() => {

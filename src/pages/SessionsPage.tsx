@@ -10,12 +10,35 @@ import {
   IconTrash,
 } from "../app/shell/icons";
 
+const BR_LOCALE = "pt-BR";
+
+function toDateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateBr(value: string | Date) {
+  return new Date(value).toLocaleDateString(BR_LOCALE, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatTimeBr(value: string | Date) {
+  return new Date(value).toLocaleTimeString(BR_LOCALE, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export function SessionsPage() {
   const { data, actions } = useRpgData();
   const [title, setTitle] = useState("");
-  const [date, setDate] = useState(
-    () => new Date().toISOString().split("T")[0],
-  );
+  const [date, setDate] = useState(() => toDateInputValue(new Date()));
   const [time, setTime] = useState("20:00");
   const [address, setAddress] = useState("");
   const [campaignName, setCampaignName] = useState(data.campaign.name || "");
@@ -45,7 +68,6 @@ export function SessionsPage() {
       notes,
     });
 
-    // Reset fields
     setTitle("");
     setAddress("");
     setNotes("");
@@ -55,14 +77,14 @@ export function SessionsPage() {
     <div className="page">
       <header className="page__header">
         <div>
-          <h1 className="page__title">Sessões</h1>
+          <h1 className="page__title">Sessoes</h1>
           <p className="page__subtitle">
-            Planeje as próximas sessões e acompanhe o histórico.
+            Planeje as proximas sessoes e acompanhe o historico.
           </p>
         </div>
       </header>
 
-      <section className="grid" aria-label="Criar sessão">
+      <section className="grid" aria-label="Criar sessao">
         <div className="card card--span-12">
           <div className="section-header" style={{ marginBottom: 20 }}>
             <div className="section-title">
@@ -70,7 +92,7 @@ export function SessionsPage() {
                 size={18}
                 style={{ marginRight: 8, color: "var(--accent)" }}
               />
-              Nova Sessão
+              Nova Sessao
             </div>
           </div>
 
@@ -82,7 +104,7 @@ export function SessionsPage() {
             }}
           >
             <div className="field" style={{ gridColumn: "span 4" }}>
-              <div className="label">Título da Sessão</div>
+              <div className="label">Titulo da Sessao</div>
               <input
                 className="input"
                 value={title}
@@ -109,6 +131,7 @@ export function SessionsPage() {
                   <input
                     className="input"
                     type="date"
+                    lang={BR_LOCALE}
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     style={{ paddingLeft: 32 }}
@@ -129,6 +152,8 @@ export function SessionsPage() {
                   <input
                     className="input"
                     type="time"
+                    lang={BR_LOCALE}
+                    step={60}
                     value={time}
                     onChange={(e) => setTime(e.target.value)}
                     style={{ paddingLeft: 32 }}
@@ -155,14 +180,14 @@ export function SessionsPage() {
                   className="input"
                   value={campaignName}
                   onChange={(e) => setCampaignName(e.target.value)}
-                  placeholder="Nome da Campanha"
+                  placeholder="Nome da campanha"
                   style={{ paddingLeft: 32 }}
                 />
               </div>
             </div>
 
             <div className="field" style={{ gridColumn: "span 12" }}>
-              <div className="label">Endereço / Link</div>
+              <div className="label">Endereco / Link</div>
               <div style={{ position: "relative" }}>
                 <IconMapPin
                   size={14}
@@ -179,20 +204,20 @@ export function SessionsPage() {
                   className="input"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Local físico ou link do Discord/Roll20"
+                  placeholder="Local fisico ou link do Discord/Roll20"
                   style={{ paddingLeft: 32, width: "100%" }}
                 />
               </div>
             </div>
 
             <div className="field" style={{ gridColumn: "span 12" }}>
-              <div className="label">Observações e Planejamento</div>
+              <div className="label">Observacoes e Planejamento</div>
               <textarea
                 className="input"
                 rows={3}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="O que aconteceu na última sessão? O que planejar para esta?"
+                placeholder="O que aconteceu na ultima sessao? O que planejar para esta?"
                 style={{
                   resize: "vertical",
                   minHeight: "80px",
@@ -216,7 +241,7 @@ export function SessionsPage() {
               onClick={handleAddSession}
               style={{ padding: "10px 24px" }}
             >
-              Criar Sessão
+              Criar Sessao
             </button>
           </div>
         </div>
@@ -231,7 +256,7 @@ export function SessionsPage() {
           }}
         >
           <div className="section-header" style={{ marginBottom: 16 }}>
-            <div className="section-title">Histórico de Sessões</div>
+            <div className="section-title">Historico de Sessoes</div>
           </div>
 
           <div
@@ -250,7 +275,7 @@ export function SessionsPage() {
                   color: "var(--muted)",
                 }}
               >
-                Nenhuma sessão cadastrada ainda.
+                Nenhuma sessao cadastrada ainda.
               </div>
             ) : (
               sortedSessions.map((s) => (
@@ -313,7 +338,7 @@ export function SessionsPage() {
                           }}
                         >
                           <IconCalendar size={12} />
-                          {new Date(s.scheduledAtIso).toLocaleDateString()}
+                          {formatDateBr(s.scheduledAtIso)}
                         </span>
                         <span
                           style={{
@@ -323,10 +348,7 @@ export function SessionsPage() {
                           }}
                         >
                           <IconClock size={12} />
-                          {new Date(s.scheduledAtIso).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                          {formatTimeBr(s.scheduledAtIso)}
                         </span>
                       </div>
                     </div>
@@ -421,7 +443,7 @@ export function SessionsPage() {
                         }}
                       >
                         <IconNotes size={10} />
-                        Notas da Sessão
+                        Notas da Sessao
                       </div>
                       {s.notes}
                     </div>
@@ -435,3 +457,4 @@ export function SessionsPage() {
     </div>
   );
 }
+

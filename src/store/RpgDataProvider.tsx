@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Character, CharacterModule, RpgDataV1, Session } from "../domain/rpg";
 import { RpgDataContext, type RpgDataActions } from "./RpgDataContext";
 import { useAuth } from "../contexts/AuthContext";
-import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
-import { defaultLevelForSystem } from "../domain/savagePathfinder";
+import { defaultLevelForSystem, isSavagePathfinder } from "../domain/savagePathfinder";
+import { createCharacterApiV1Client } from "../services/characterApiV1";
+import {
+  createCharacterRevisionStore,
+  dualWriteCharacterCombatState,
+} from "../services/characterDualWrite";
+import { isCharacterV1DualWriteEnabled } from "../services/featureFlags";
+import { loadCloudRpgData, saveCloudRpgData } from "../services/cloudRpgDataApi";
 import {
   createSeedData,
   loadRpgData,
@@ -12,17 +18,56 @@ import {
   newIsoNow,
   saveRpgData,
 } from "./rpgStorage";
+import { loadRpgDataFromSqlite, saveRpgDataToSqlite } from "./sqliteStorage";
 
 export function RpgDataProvider(props: { children: React.ReactNode }) {
-  const [data, setData] = useState<RpgDataV1>(() => loadRpgData());
+  const [data, setData] = useState<RpgDataV1>(() => loadRpgData("local-user"));
   const { user, isLoading: isAuthLoading, isConfigured } = useAuth();
   const [isCloudReady, setIsCloudReady] = useState(false);
   const [, setCloudError] = useState<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const dualWriteEnabled = isCharacterV1DualWriteEnabled();
+  const characterApiClient = useMemo(() => {
+    if (!dualWriteEnabled) return null;
+    return createCharacterApiV1Client({
+      baseUrl:
+        (import.meta.env.VITE_CHARACTER_API_BASE_URL as string | undefined) ??
+        "/api/v1",
+    });
+  }, [dualWriteEnabled]);
+  const characterRevisionStoreRef = useRef(createCharacterRevisionStore());
+
+  function syncUserId() {
+    return user?.id ?? "local-user";
+  }
+
+  useEffect(() => {
+    let isCancelled = false;
+    const storageUserId = syncUserId();
+
+    void (async () => {
+      const sqliteData = await loadRpgDataFromSqlite(storageUserId);
+      if (isCancelled) return;
+
+      if (sqliteData) {
+        setData(sqliteData);
+        saveRpgData(sqliteData, storageUserId);
+      } else {
+        const localData = loadRpgData(storageUserId);
+        setData(localData);
+        saveRpgData(localData, storageUserId);
+        await saveRpgDataToSqlite(localData, storageUserId);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (isAuthLoading) return;
-    if (!isConfigured || !isSupabaseConfigured || !supabase) {
+    if (!isConfigured) {
       setIsCloudReady(false);
       setCloudError(null);
       return;
@@ -35,31 +80,28 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
 
     let isCancelled = false;
 
-    (async () => {
+    void (async () => {
       try {
         setCloudError(null);
-        const { data: row, error } = await supabase
-          .from("rpg_data")
-          .select("data")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
+        const localData = loadRpgData(user.id);
+        const cloudData = await loadCloudRpgData(user.id);
         if (isCancelled) return;
-
-        if (error) throw error;
-
-        if (row?.data) {
-          const normalized = normalizeRpgDataV1(row.data as unknown);
-          setData(normalized);
-          saveRpgData(normalized);
-        } else {
-          await supabase.from("rpg_data").upsert({
-            user_id: user.id,
-            data: normalizeRpgDataV1(data as unknown),
-            updated_at: new Date().toISOString(),
-          });
-        }
-
+        const normalized = normalizeRpgDataV1({
+          ...localData,
+          ...(cloudData ?? {}),
+          campaign: {
+            ...localData.campaign,
+            ...(cloudData?.campaign ?? {}),
+          },
+          notes: {
+            ...localData.notes,
+            ...(cloudData?.notes ?? {}),
+          },
+          social: localData.social,
+        });
+        setData(normalized);
+        saveRpgData(normalized, user.id);
+        await saveRpgDataToSqlite(normalized, user.id);
         if (!isCancelled) setIsCloudReady(true);
       } catch (e: any) {
         if (!isCancelled) {
@@ -91,24 +133,87 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
       return { ...module, column, span, rowSpan };
     }
 
-    function commit(updater: (prev: RpgDataV1) => RpgDataV1) {
+    function toModuleSystem(system: string): CharacterModule["system"] {
+      return isSavagePathfinder(system) ? "savage_pathfinder" : "generic";
+    }
+
+    function createDefaultStats(system: string): Character["stats"] {
+      if (isSavagePathfinder(system)) {
+        return {
+          ca: 10,
+          hp: { current: 3, max: 3 },
+          initiative: 0,
+          pace: 6,
+          parry: 6,
+          toughness: 8,
+          wounds: 0,
+          fatigue: 0,
+          isIncapacitated: false,
+        };
+      }
+
+      return { ca: 10, hp: { current: 10, max: 10 }, initiative: 0 };
+    }
+
+    function createDefaultModules(system: string): CharacterModule[] {
+      if (!isSavagePathfinder(system)) return [];
+      const moduleSystem = toModuleSystem(system);
+      return [
+        { id: newId(), type: "combat_stats", system: moduleSystem, column: 0, span: 1, rowSpan: 1 },
+        { id: newId(), type: "attributes", system: moduleSystem, column: 1, span: 1, rowSpan: 1 },
+        {
+          id: newId(),
+          type: "power_points",
+          system: moduleSystem,
+          column: 2,
+          span: 1,
+          rowSpan: 1,
+          data: { current: 10, max: 10 },
+        },
+      ];
+    }
+
+    function commit(
+      updater: (prev: RpgDataV1) => RpgDataV1,
+      options?: {
+        dualWriteCharacterId?: string;
+        shouldDualWrite?: (prev: RpgDataV1, next: RpgDataV1) => boolean;
+        skipCloudSync?: boolean;
+      },
+    ) {
       setData((prev) => {
         const next = updater(prev);
-        saveRpgData(next);
+        saveRpgData(next, user?.id);
+        void saveRpgDataToSqlite(next, user?.id);
+        const shouldDualWrite =
+          options?.dualWriteCharacterId &&
+          (!options.shouldDualWrite || options.shouldDualWrite(prev, next));
 
-        if (user && isCloudReady && supabase) {
-          const client = supabase;
+        if (shouldDualWrite && characterApiClient) {
+          const character = next.characters.find(
+            (item) => item.id === options.dualWriteCharacterId,
+          );
+          if (character) {
+            void dualWriteCharacterCombatState({
+              enabled: dualWriteEnabled,
+              client: characterApiClient,
+              character,
+              revisions: characterRevisionStoreRef.current,
+            });
+          }
+        }
+
+        if (user && isCloudReady && !options?.skipCloudSync) {
           const userId = user.id;
           if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
           saveTimerRef.current = window.setTimeout(() => {
             void (async () => {
               try {
-                await client.from("rpg_data").upsert({
-                  user_id: userId,
-                  data: next,
-                  updated_at: new Date().toISOString(),
-                });
-              } catch {}
+                await saveCloudRpgData(userId, next);
+                setIsCloudReady(true);
+              } catch {
+                setIsCloudReady(false);
+              }
             })();
           }, 600);
         }
@@ -124,63 +229,199 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
       setCampaignSystem(system) {
         commit((prev) => ({ ...prev, campaign: { ...prev.campaign, system } }));
       },
+      registerCampaign(input) {
+        commit((prev) => ({
+          ...prev,
+          campaign: {
+            ...prev.campaign,
+            name: input.name.trim(),
+            system: input.system.trim(),
+            role: input.role,
+            locale: input.locale.trim(),
+            timeZone: input.timeZone.trim(),
+            isRegistered: true,
+            partyMemberIds: prev.campaign.partyMemberIds ?? [],
+          },
+        }));
+      },
+      setCampaignPartyMembers(characterIds) {
+        commit((prev) => {
+          const ids = characterIds
+            .map((id) => id.trim())
+            .filter((id) => id.length > 0);
+          const existingIds = new Set(prev.characters.map((character) => character.id));
+          const filtered = ids.filter((id) => existingIds.has(id));
+          return {
+            ...prev,
+            campaign: {
+              ...prev.campaign,
+              partyMemberIds: Array.from(new Set(filtered)),
+            },
+          };
+        });
+      },
+      setSocialFriends(friends) {
+        commit((prev) => {
+          const social = prev.social ?? { friends: [], groups: [] };
+          const normalized = friends
+            .map((friend) => {
+              const id = friend.id.trim();
+              const name = friend.name.trim();
+              if (!id || !name) return null;
+              return {
+                id,
+                name,
+                status: friend.status,
+                activity: friend.activity?.trim() || undefined,
+                avatarUrl: friend.avatarUrl,
+              };
+            })
+            .filter(
+              (friend): friend is NonNullable<typeof friend> => Boolean(friend),
+            );
+
+          return {
+            ...prev,
+            social: {
+              ...social,
+              friends: normalized,
+            },
+          };
+        }, { skipCloudSync: true });
+      },
+      sendFriendRequest(input) {
+        commit((prev) => {
+          const id = input.id.trim();
+          const name = input.name.trim();
+          if (!id || !name) return prev;
+
+          const social = prev.social ?? { friends: [], groups: [] };
+          const alreadyFriend = social.friends.some((friend) => friend.id === id);
+          if (alreadyFriend) return prev;
+
+          const requestsSent = social.requestsSent ?? [];
+          const alreadyRequested = requestsSent.some((request) => request.id === id);
+          if (alreadyRequested) return prev;
+
+          return {
+            ...prev,
+            social: {
+              ...social,
+              requestsSent: [
+                ...requestsSent,
+                {
+                  id,
+                  name,
+                  handle: input.handle?.trim() || undefined,
+                  avatarUrl: input.avatarUrl,
+                  sentAtIso: newIsoNow(),
+                  status: "pending",
+                },
+              ],
+            },
+          };
+        }, { skipCloudSync: true });
+      },
+      setSentFriendRequests(requests) {
+        commit((prev) => {
+          const social = prev.social ?? { friends: [], groups: [] };
+          const normalized = requests
+            .map((request) => ({
+              id: request.id.trim(),
+              name: request.name.trim(),
+              handle: request.handle?.trim() || undefined,
+              avatarUrl: request.avatarUrl,
+              sentAtIso: request.sentAtIso,
+              status: "pending" as const,
+            }))
+            .filter((request) => request.id.length > 0 && request.name.length > 0);
+
+          return {
+            ...prev,
+            social: {
+              ...social,
+              requestsSent: normalized,
+            },
+          };
+        }, { skipCloudSync: true });
+      },
       upsertCharacter(input) {
         commit((prev) => {
           const now = newIsoNow();
           const id = input.id ?? newId();
-          const exists = prev.characters.some((c) => c.id === id);
-          const prevLevel = prev.characters.find((c) => c.id === id)?.level;
+          const existingCharacter = prev.characters.find((character) => character.id === id);
+          const exists = Boolean(existingCharacter);
+          const system = input.system.trim() || prev.campaign.system || "savage_pathfinder";
+          const conviction =
+            typeof input.conviction === "number" && Number.isFinite(input.conviction)
+              ? Math.max(0, Math.floor(input.conviction))
+              : undefined;
+          const edges =
+            typeof input.edges === "number" && Number.isFinite(input.edges)
+              ? Math.max(0, Math.floor(input.edges))
+              : undefined;
           const nextChar: Character = {
             id,
             name: input.name.trim(),
-            system: input.system,
+            system,
             playerName: input.playerName.trim(),
-            class:
-              input.class ??
-              (exists
-                ? prev.characters.find((c) => c.id === id)?.class
-                : undefined),
-            race:
-              input.race ??
-              (exists
-                ? prev.characters.find((c) => c.id === id)?.race
-                : undefined),
-            level:
-              input.level ?? prevLevel ?? defaultLevelForSystem(input.system),
+            class: input.class ?? existingCharacter?.class,
+            race: input.race ?? existingCharacter?.race,
+            ancestry: input.ancestry ?? existingCharacter?.ancestry,
+            height: input.height ?? existingCharacter?.height,
+            weight: input.weight ?? existingCharacter?.weight,
+            edges: edges ?? existingCharacter?.edges,
+            conviction: conviction ?? existingCharacter?.conviction,
+            level: input.level ?? existingCharacter?.level ?? defaultLevelForSystem(system),
             createdAtIso: input.id
-              ? (prev.characters.find((c) => c.id === id)?.createdAtIso ?? now)
+              ? (existingCharacter?.createdAtIso ?? now)
               : now,
-            stats: exists
-              ? prev.characters.find((c) => c.id === id)?.stats
-              : { ca: 10, hp: { current: 10, max: 10 }, initiative: 0 },
+            stats: exists ? existingCharacter?.stats : createDefaultStats(system),
             attributes: exists
-              ? prev.characters.find((c) => c.id === id)?.attributes
+              ? existingCharacter?.attributes
               : { agility: 4, smarts: 4, spirit: 4, strength: 4, vigor: 4 },
             modules: exists
-              ? (prev.characters.find((c) => c.id === id)?.modules ?? [])
-              : [],
+              ? (existingCharacter?.modules ?? [])
+              : createDefaultModules(system),
           };
           const characters = exists
             ? prev.characters.map((c) => (c.id === id ? nextChar : c))
             : [nextChar, ...prev.characters];
-          return { ...prev, characters };
+          const partyMemberIds = exists
+            ? prev.campaign.partyMemberIds ?? []
+            : Array.from(new Set([...(prev.campaign.partyMemberIds ?? []), id]));
+          return {
+            ...prev,
+            campaign: {
+              ...prev.campaign,
+              partyMemberIds,
+            },
+            characters,
+          };
         });
       },
       removeCharacter(id) {
         commit((prev) => ({
           ...prev,
+          campaign: {
+            ...prev.campaign,
+            partyMemberIds: (prev.campaign.partyMemberIds ?? []).filter(
+              (characterId) => characterId !== id,
+            ),
+          },
           characters: prev.characters.filter((c) => c.id !== id),
         }));
       },
       addSession(input) {
         commit((prev) => {
           const now = newIsoNow();
+          const campaignName = input.campaignName?.trim() || prev.campaign.name;
           const nextSession: Session = {
             id: newId(),
             title: input.title.trim(),
             scheduledAtIso: input.scheduledAtIso,
             address: input.address?.trim(),
-            campaignName: input.campaignName?.trim(),
+            campaignName,
             notes: input.notes?.trim(),
             createdAtIso: now,
           };
@@ -200,9 +441,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
       resetToSeed() {
-        const next = createSeedData();
-        saveRpgData(next);
-        setData(next);
+        commit(() => createSeedData());
       },
       updateCharacter(id, updates) {
         commit((prev) => ({
@@ -213,12 +452,15 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
       updateCharacterStats(id, stats) {
-        commit((prev) => ({
-          ...prev,
-          characters: prev.characters.map((c) =>
-            c.id === id ? { ...c, stats } : c,
-          ),
-        }));
+        commit(
+          (prev) => ({
+            ...prev,
+            characters: prev.characters.map((c) =>
+              c.id === id ? { ...c, stats } : c,
+            ),
+          }),
+          { dualWriteCharacterId: id },
+        );
       },
       updateCharacterAttributes(id, attributes) {
         commit((prev) => ({
@@ -253,21 +495,31 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
       updateCharacterModule(charId, moduleId, updates) {
-        commit((prev) => ({
-          ...prev,
-          characters: prev.characters.map((c) =>
-            c.id === charId
-              ? {
-                  ...c,
-                  modules: (c.modules || []).map((m) =>
-                    m.id === moduleId
-                      ? normalizeModuleLayout({ ...m, ...updates })
-                      : m,
-                  ),
-                }
-              : c,
-          ),
-        }));
+        commit(
+          (prev) => ({
+            ...prev,
+            characters: prev.characters.map((c) =>
+              c.id === charId
+                ? {
+                    ...c,
+                    modules: (c.modules || []).map((m) =>
+                      m.id === moduleId
+                        ? normalizeModuleLayout({ ...m, ...updates })
+                        : m,
+                    ),
+                  }
+                : c,
+            ),
+          }),
+          {
+            dualWriteCharacterId: charId,
+            shouldDualWrite(prev) {
+              const character = prev.characters.find((item) => item.id === charId);
+              const module = character?.modules?.find((item) => item.id === moduleId);
+              return module?.type === "power_points";
+            },
+          },
+        );
       },
       reorderCharacterModule(charId, moduleId, direction) {
         commit((prev) => {
@@ -375,7 +627,12 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
     };
-  }, [isCloudReady, user]);
+  }, [
+    characterApiClient,
+    dualWriteEnabled,
+    isCloudReady,
+    user,
+  ]);
 
   return (
     <RpgDataContext.Provider value={{ data, actions }}>

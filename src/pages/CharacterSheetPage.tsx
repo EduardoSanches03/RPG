@@ -38,6 +38,7 @@ import type {
 } from "../domain/rpg";
 import { formatLevel } from "../domain/savagePathfinder";
 import { ReferenceSidebar } from "../components/ReferenceSidebar";
+import { ROUTES } from "../app/routes";
 
 function DieShape({
   sides,
@@ -2569,7 +2570,7 @@ export function CharacterSheetPage() {
 
   useEffect(() => {
     if (!character && id) {
-      navigate("/characters");
+      navigate(ROUTES.characters);
     }
   }, [character, id, navigate]);
 
@@ -2867,7 +2868,7 @@ export function CharacterSheetPage() {
       <button
         className="button button--ghost"
         style={{ marginBottom: 16, paddingLeft: 0, color: "var(--muted)" }}
-        onClick={() => navigate("/characters")}
+        onClick={() => navigate(ROUTES.characters)}
       >
         <IconChevronLeft style={{ marginRight: 6 }} />
         Voltar para Personagens
@@ -3425,7 +3426,7 @@ export function CharacterSheetPage() {
 
         <button
           className="dock-btn dock-btn--danger"
-          onClick={() => navigate("/characters")}
+          onClick={() => navigate(ROUTES.characters)}
         >
           Fechar Ficha
         </button>

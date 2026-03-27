@@ -1,14 +1,16 @@
-import { useRpgData } from '../store/RpgDataContext'
+import { useRpgData } from "../store/RpgDataContext";
 
 export function NotesPage() {
-  const { data, actions } = useRpgData()
+  const { data, actions } = useRpgData();
 
   return (
     <div className="page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Notas</h1>
-          <p className="page__subtitle">Organize ganchos, NPCs, locais, regras da mesa e qualquer coisa útil.</p>
+          <p className="page__subtitle">
+            Organize ganchos, NPCs, locais, regras da mesa e qualquer coisa util.
+          </p>
         </div>
       </header>
 
@@ -22,9 +24,12 @@ export function NotesPage() {
               onChange={(e) => actions.setCampaignNotes(e.target.value)}
             />
           </div>
-          <div style={{ marginTop: 10, color: 'var(--muted)', fontSize: 13 }}>Salva automaticamente.</div>
+          <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
+            Salva automaticamente.
+          </div>
         </div>
       </section>
     </div>
-  )
+  );
 }
+

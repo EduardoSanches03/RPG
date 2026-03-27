@@ -5,6 +5,39 @@ import type { SavagePathfinderRank } from "../domain/savagePathfinder";
 export type RpgDataActions = {
   setCampaignName: (name: string) => void;
   setCampaignSystem: (system: string) => void;
+  registerCampaign: (input: {
+    name: string;
+    system: string;
+    role: "mestre" | "jogador";
+    locale: string;
+    timeZone: string;
+  }) => void;
+  setCampaignPartyMembers: (characterIds: string[]) => void;
+  setSocialFriends: (
+    friends: Array<{
+      id: string;
+      name: string;
+      status: "online" | "in_party" | "offline";
+      activity?: string;
+      avatarUrl?: string;
+    }>,
+  ) => void;
+  sendFriendRequest: (input: {
+    id: string;
+    name: string;
+    handle?: string;
+    avatarUrl?: string;
+  }) => void;
+  setSentFriendRequests: (
+    requests: Array<{
+      id: string;
+      name: string;
+      handle?: string;
+      avatarUrl?: string;
+      sentAtIso: string;
+      status?: "pending";
+    }>,
+  ) => void;
   upsertCharacter: (input: {
     id?: string;
     name: string;
@@ -12,6 +45,11 @@ export type RpgDataActions = {
     playerName: string;
     class?: string;
     race?: string;
+    ancestry?: string;
+    height?: string;
+    weight?: string;
+    edges?: number;
+    conviction?: number;
     level?: number | SavagePathfinderRank;
   }) => void;
   removeCharacter: (id: string) => void;
