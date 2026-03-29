@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRpgData } from "../store/RpgDataContext";
 import {
   IconCalendar,
@@ -54,6 +54,10 @@ export function SessionsPage() {
         new Date(a.scheduledAtIso).getTime(),
     );
   }, [data.sessions]);
+
+  useEffect(() => {
+    setCampaignName(data.campaign.name || "");
+  }, [data.campaign.id, data.campaign.name]);
 
   function handleAddSession() {
     if (!canAdd) return;

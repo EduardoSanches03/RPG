@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom";
 import { ROUTES } from "../app/routes";
 import { IconClock, IconMapPin, IconSparkles } from "../app/shell/icons";
+import { flattenCampaignBook } from "../domain/campaignBook";
 import { useRpgData } from "../store/RpgDataContext";
 
 function formatDate(iso: string) {
@@ -76,7 +77,7 @@ export function DashboardPage() {
     return source.slice(0, 4);
   }, [data.campaign.partyMemberIds, data.characters]);
   const summary = useMemo(() => {
-    const raw = (data.notes.campaign || "").trim();
+    const raw = flattenCampaignBook(data.notes.campaign).trim();
     if (!raw) return "Nenhum resumo registrado. Abra Notas e escreva os eventos da ultima sessao.";
     if (raw.length <= 320) return raw;
     return `${raw.slice(0, 320)}...`;

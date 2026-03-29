@@ -3,6 +3,15 @@ import type { Character, CharacterModule, RpgDataV1 } from "../domain/rpg";
 import type { SavagePathfinderRank } from "../domain/savagePathfinder";
 
 export type RpgDataActions = {
+  createCampaign: (input?: {
+    name?: string;
+    system?: string;
+    role?: "mestre" | "jogador";
+    locale?: string;
+    timeZone?: string;
+  }) => void;
+  removeCampaign: (campaignId: string) => void;
+  setActiveCampaign: (campaignId: string) => void;
   setCampaignName: (name: string) => void;
   setCampaignSystem: (system: string) => void;
   registerCampaign: (input: {

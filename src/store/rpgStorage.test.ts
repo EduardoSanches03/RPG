@@ -20,9 +20,12 @@ describe("rpgStorage", () => {
 
     expect(seed.version).toBe(1);
     expect(seed.campaign.name).toBe("A Taverna");
+    expect(seed.campaigns).toHaveLength(1);
+    expect(seed.activeCampaignId).toBe(seed.campaign.id);
     expect(seed.characters).toEqual([]);
     expect(seed.sessions).toEqual([]);
     expect(seed.notes.campaign).toBe("");
+    expect(seed.notes.byCampaign?.[seed.campaign.id]).toBe("");
     expect(seed.campaign.locale).toBe("pt-BR");
     expect(seed.campaign.timeZone).toBe("America/Sao_Paulo");
     expect(seed.campaign.isRegistered).toBe(false);
@@ -51,6 +54,10 @@ describe("rpgStorage", () => {
 
     expect(normalized.version).toBe(1);
     expect(normalized.campaign.name).toBe("Campanha Teste");
+    expect(normalized.campaigns?.some((campaign) => campaign.id === normalized.campaign.id)).toBe(
+      true,
+    );
+    expect(normalized.activeCampaignId).toBe(normalized.campaign.id);
     expect(normalized.campaign.role).toBe("mestre");
     expect(normalized.campaign.locale).toBe("pt-BR");
     expect(normalized.campaign.timeZone).toBe("America/Sao_Paulo");
@@ -67,6 +74,7 @@ describe("rpgStorage", () => {
     expect(normalized.social?.requestsSent?.[0].status).toBe("pending");
     expect(normalized.sessions).toHaveLength(1);
     expect(normalized.notes.campaign).toBe("");
+    expect(normalized.notes.byCampaign?.[normalized.campaign.id]).toBe("");
   });
 
   it("deve carregar seed quando nao ha dados no localStorage", () => {
@@ -133,7 +141,7 @@ describe("rpgStorage", () => {
     const originalSetItem = Storage.prototype.setItem;
     const setItemSpy = vi
       .spyOn(Storage.prototype, "setItem")
-      .mockImplementation(function (key: string, value: string) {
+      .mockImplementation(function (this: Storage, key: string, value: string) {
         if (key === `${STORAGE_KEY_PREFIX}user-1` && !this.getItem("__quota_once__")) {
           originalSetItem.call(this, "__quota_once__", "1");
           throw new DOMException("quota cheia", "QuotaExceededError");

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Character, CharacterModule, RpgDataV1, Session } from "../domain/rpg";
+import type { Campaign, Character, CharacterModule, RpgDataV1, Session } from "../domain/rpg";
 import { RpgDataContext, type RpgDataActions } from "./RpgDataContext";
 import { useAuth } from "../contexts/AuthContext";
 import { defaultLevelForSystem, isSavagePathfinder } from "../domain/savagePathfinder";
@@ -19,6 +19,53 @@ import {
   saveRpgData,
 } from "./rpgStorage";
 import { loadRpgDataFromSqlite, saveRpgDataToSqlite } from "./sqliteStorage";
+
+function ensureCampaignState(data: RpgDataV1) {
+  const list = data.campaigns?.length ? [...data.campaigns] : [data.campaign];
+  const deduped = list.filter((campaign, index) => list.findIndex((entry) => entry.id === campaign.id) === index);
+  const campaigns = deduped.length > 0 ? deduped : [data.campaign];
+  const hasActive = campaigns.some((campaign) => campaign.id === data.activeCampaignId);
+  const activeCampaignId = hasActive ? data.activeCampaignId ?? campaigns[0].id : campaigns[0].id;
+  const activeCampaign = campaigns.find((campaign) => campaign.id === activeCampaignId) ?? campaigns[0];
+  return { campaigns, activeCampaignId, activeCampaign };
+}
+
+function ensureNotesByCampaign(data: RpgDataV1, activeCampaignId: string) {
+  const byCampaign = { ...(data.notes.byCampaign ?? {}) };
+  if (typeof byCampaign[activeCampaignId] !== "string") {
+    byCampaign[activeCampaignId] = data.notes.campaign ?? "";
+  }
+  return byCampaign;
+}
+
+function resolveCampaignScopedData(data: RpgDataV1): RpgDataV1 {
+  const { campaigns, activeCampaignId, activeCampaign } = ensureCampaignState(data);
+  const notesByCampaign = ensureNotesByCampaign(data, activeCampaignId);
+  const campaignNote = notesByCampaign[activeCampaignId] ?? "";
+  const activeName = activeCampaign.name.trim().toLowerCase();
+  const filteredSessions = data.sessions.filter((session) => {
+    if (session.campaignId && session.campaignId.trim().length > 0) {
+      return session.campaignId === activeCampaignId;
+    }
+    if (session.campaignName && session.campaignName.trim().length > 0) {
+      return session.campaignName.trim().toLowerCase() === activeName;
+    }
+    return true;
+  });
+
+  return {
+    ...data,
+    campaign: activeCampaign,
+    campaigns,
+    activeCampaignId,
+    sessions: filteredSessions,
+    notes: {
+      ...data.notes,
+      campaign: campaignNote,
+      byCampaign: notesByCampaign,
+    },
+  };
+}
 
 export function RpgDataProvider(props: { children: React.ReactNode }) {
   const [data, setData] = useState<RpgDataV1>(() => loadRpgData("local-user"));
@@ -173,6 +220,33 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
       ];
     }
 
+    function resolveCampaignState(prev: RpgDataV1) {
+      const campaigns = prev.campaigns?.length ? [...prev.campaigns] : [prev.campaign];
+      const activeCampaignId = campaigns.some((campaign) => campaign.id === prev.activeCampaignId)
+        ? prev.activeCampaignId ?? campaigns[0].id
+        : campaigns[0].id;
+      const activeCampaign =
+        campaigns.find((campaign) => campaign.id === activeCampaignId) ?? campaigns[0];
+      return { campaigns, activeCampaignId, activeCampaign };
+    }
+
+    function withCampaignState(
+      prev: RpgDataV1,
+      nextCampaigns: Campaign[],
+      nextActiveCampaignId: string,
+    ) {
+      const campaignPool = nextCampaigns.length > 0 ? nextCampaigns : [prev.campaign];
+      const activeCampaign =
+        campaignPool.find((campaign) => campaign.id === nextActiveCampaignId) ??
+        campaignPool[0];
+      return {
+        ...prev,
+        campaigns: campaignPool,
+        activeCampaignId: activeCampaign.id,
+        campaign: activeCampaign,
+      };
+    }
+
     function commit(
       updater: (prev: RpgDataV1) => RpgDataV1,
       options?: {
@@ -223,41 +297,188 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
     }
 
     return {
+      createCampaign(input) {
+        commit((prev) => {
+          const { campaigns, activeCampaign } = resolveCampaignState(prev);
+          const baseName = input?.name?.trim() || `Campanha ${campaigns.length + 1}`;
+          const existingNames = new Set(
+            campaigns.map((campaign) => campaign.name.trim().toLowerCase()).filter(Boolean),
+          );
+          let nextName = baseName;
+          let suffix = 2;
+          while (existingNames.has(nextName.trim().toLowerCase())) {
+            nextName = `${baseName} ${suffix}`;
+            suffix += 1;
+          }
+
+          const now = newIsoNow();
+          const createdCampaign: Campaign = {
+            id: newId(),
+            name: nextName,
+            system: input?.system?.trim() || activeCampaign.system || "savage_pathfinder",
+            createdAtIso: now,
+            role: input?.role ?? activeCampaign.role ?? "mestre",
+            locale: input?.locale?.trim() || activeCampaign.locale || "pt-BR",
+            timeZone: input?.timeZone?.trim() || activeCampaign.timeZone || "America/Sao_Paulo",
+            isRegistered: false,
+            partyMemberIds: [],
+          };
+          const nextCampaigns = [createdCampaign, ...campaigns];
+          const notesByCampaign = {
+            ...(prev.notes.byCampaign ?? {}),
+            [createdCampaign.id]: "",
+          };
+          const next = withCampaignState(prev, nextCampaigns, createdCampaign.id);
+          return {
+            ...next,
+            notes: {
+              ...prev.notes,
+              campaign: "",
+              byCampaign: notesByCampaign,
+            },
+          };
+        });
+      },
+      removeCampaign(campaignId) {
+        commit((prev) => {
+          const targetId = campaignId.trim();
+          if (!targetId) return prev;
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
+          if (campaigns.length <= 1) return prev;
+          const removedCampaign = campaigns.find((campaign) => campaign.id === targetId);
+          if (!removedCampaign) return prev;
+
+          const remainingCampaigns = campaigns.filter((campaign) => campaign.id !== targetId);
+          if (!remainingCampaigns.length) return prev;
+
+          const nextActiveCampaignId =
+            targetId === activeCampaignId ? remainingCampaigns[0].id : activeCampaignId;
+          const next = withCampaignState(prev, remainingCampaigns, nextActiveCampaignId);
+
+          const notesByCampaign = { ...(prev.notes.byCampaign ?? {}) };
+          delete notesByCampaign[targetId];
+          const nextCampaignNote = notesByCampaign[nextActiveCampaignId] ?? "";
+          const removedCampaignName = removedCampaign.name.trim().toLowerCase();
+          const nextSessions = prev.sessions.filter((session) => {
+            if (session.campaignId && session.campaignId.trim().length > 0) {
+              return session.campaignId !== targetId;
+            }
+            if (!removedCampaignName) return true;
+            const sessionCampaignName = session.campaignName?.trim().toLowerCase();
+            if (!sessionCampaignName) return true;
+            return sessionCampaignName !== removedCampaignName;
+          });
+
+          return {
+            ...next,
+            sessions: nextSessions,
+            notes: {
+              ...prev.notes,
+              campaign: nextCampaignNote,
+              byCampaign: notesByCampaign,
+            },
+          };
+        });
+      },
+      setActiveCampaign(campaignId) {
+        commit((prev) => {
+          const targetId = campaignId.trim();
+          if (!targetId) return prev;
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
+          if (!campaigns.some((campaign) => campaign.id === targetId)) return prev;
+          if (targetId === activeCampaignId) return prev;
+          const notesByCampaign = ensureNotesByCampaign(prev, targetId);
+          const next = withCampaignState(prev, campaigns, targetId);
+          return {
+            ...next,
+            notes: {
+              ...prev.notes,
+              campaign: notesByCampaign[targetId] ?? "",
+              byCampaign: notesByCampaign,
+            },
+          };
+        });
+      },
       setCampaignName(name) {
-        commit((prev) => ({ ...prev, campaign: { ...prev.campaign, name } }));
+        commit((prev) => {
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
+          const nextCampaigns = campaigns.map((campaign) =>
+            campaign.id === activeCampaignId ? { ...campaign, name } : campaign,
+          );
+          const sanitizedName = name.trim();
+          const nextSessions =
+            sanitizedName.length > 0
+              ? prev.sessions.map((session) =>
+                  session.campaignId === activeCampaignId
+                    ? { ...session, campaignName: sanitizedName }
+                    : session,
+                )
+              : prev.sessions;
+          const next = withCampaignState(prev, nextCampaigns, activeCampaignId);
+          return {
+            ...next,
+            sessions: nextSessions,
+          };
+        });
       },
       setCampaignSystem(system) {
-        commit((prev) => ({ ...prev, campaign: { ...prev.campaign, system } }));
+        commit((prev) => {
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
+          const nextCampaigns = campaigns.map((campaign) =>
+            campaign.id === activeCampaignId ? { ...campaign, system } : campaign,
+          );
+          return withCampaignState(prev, nextCampaigns, activeCampaignId);
+        });
       },
       registerCampaign(input) {
-        commit((prev) => ({
-          ...prev,
-          campaign: {
-            ...prev.campaign,
-            name: input.name.trim(),
-            system: input.system.trim(),
-            role: input.role,
-            locale: input.locale.trim(),
-            timeZone: input.timeZone.trim(),
-            isRegistered: true,
-            partyMemberIds: prev.campaign.partyMemberIds ?? [],
-          },
-        }));
+        commit((prev) => {
+          const { campaigns, activeCampaignId, activeCampaign } = resolveCampaignState(prev);
+          const nextCampaigns = campaigns.map((campaign) =>
+            campaign.id === activeCampaignId
+              ? {
+                  ...campaign,
+                  name: input.name.trim(),
+                  system: input.system.trim(),
+                  role: input.role,
+                  locale: input.locale.trim(),
+                  timeZone: input.timeZone.trim(),
+                  isRegistered: true,
+                  partyMemberIds: campaign.partyMemberIds ?? [],
+                }
+              : campaign,
+          );
+          const notesByCampaign = ensureNotesByCampaign(prev, activeCampaignId);
+          if (typeof notesByCampaign[activeCampaignId] !== "string") {
+            notesByCampaign[activeCampaignId] = prev.notes.campaign ?? "";
+          }
+          const next = withCampaignState(prev, nextCampaigns, activeCampaignId);
+          return {
+            ...next,
+            notes: {
+              ...prev.notes,
+              campaign: notesByCampaign[activeCampaign.id] ?? prev.notes.campaign ?? "",
+              byCampaign: notesByCampaign,
+            },
+          };
+        });
       },
       setCampaignPartyMembers(characterIds) {
         commit((prev) => {
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
           const ids = characterIds
             .map((id) => id.trim())
             .filter((id) => id.length > 0);
           const existingIds = new Set(prev.characters.map((character) => character.id));
-          const filtered = ids.filter((id) => existingIds.has(id));
-          return {
-            ...prev,
-            campaign: {
-              ...prev.campaign,
-              partyMemberIds: Array.from(new Set(filtered)),
-            },
-          };
+          const filtered = Array.from(new Set(ids.filter((id) => existingIds.has(id))));
+          const nextCampaigns = campaigns.map((campaign) =>
+            campaign.id === activeCampaignId
+              ? {
+                  ...campaign,
+                  partyMemberIds: filtered,
+                }
+              : campaign,
+          );
+          return withCampaignState(prev, nextCampaigns, activeCampaignId);
         });
       },
       setSocialFriends(friends) {
@@ -347,11 +568,12 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
       },
       upsertCharacter(input) {
         commit((prev) => {
+          const { campaigns, activeCampaignId, activeCampaign } = resolveCampaignState(prev);
           const now = newIsoNow();
           const id = input.id ?? newId();
           const existingCharacter = prev.characters.find((character) => character.id === id);
           const exists = Boolean(existingCharacter);
-          const system = input.system.trim() || prev.campaign.system || "savage_pathfinder";
+          const system = input.system.trim() || activeCampaign.system || "savage_pathfinder";
           const conviction =
             typeof input.conviction === "number" && Number.isFinite(input.conviction)
               ? Math.max(0, Math.floor(input.conviction))
@@ -365,6 +587,7 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
             name: input.name.trim(),
             system,
             playerName: input.playerName.trim(),
+            campaignId: existingCharacter?.campaignId ?? activeCampaignId,
             class: input.class ?? existingCharacter?.class,
             race: input.race ?? existingCharacter?.race,
             ancestry: input.ancestry ?? existingCharacter?.ancestry,
@@ -388,38 +611,49 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
             ? prev.characters.map((c) => (c.id === id ? nextChar : c))
             : [nextChar, ...prev.characters];
           const partyMemberIds = exists
-            ? prev.campaign.partyMemberIds ?? []
-            : Array.from(new Set([...(prev.campaign.partyMemberIds ?? []), id]));
+            ? activeCampaign.partyMemberIds ?? []
+            : Array.from(new Set([...(activeCampaign.partyMemberIds ?? []), id]));
+          const nextCampaigns = campaigns.map((campaign) =>
+            campaign.id === activeCampaignId
+              ? {
+                  ...campaign,
+                  partyMemberIds,
+                }
+              : campaign,
+          );
+          const next = withCampaignState(prev, nextCampaigns, activeCampaignId);
           return {
-            ...prev,
-            campaign: {
-              ...prev.campaign,
-              partyMemberIds,
-            },
+            ...next,
             characters,
           };
         });
       },
       removeCharacter(id) {
-        commit((prev) => ({
-          ...prev,
-          campaign: {
-            ...prev.campaign,
-            partyMemberIds: (prev.campaign.partyMemberIds ?? []).filter(
+        commit((prev) => {
+          const { campaigns, activeCampaignId } = resolveCampaignState(prev);
+          const nextCampaigns = campaigns.map((campaign) => ({
+            ...campaign,
+            partyMemberIds: (campaign.partyMemberIds ?? []).filter(
               (characterId) => characterId !== id,
             ),
-          },
-          characters: prev.characters.filter((c) => c.id !== id),
-        }));
+          }));
+          const next = withCampaignState(prev, nextCampaigns, activeCampaignId);
+          return {
+            ...next,
+            characters: prev.characters.filter((character) => character.id !== id),
+          };
+        });
       },
       addSession(input) {
         commit((prev) => {
+          const { activeCampaignId, activeCampaign } = resolveCampaignState(prev);
           const now = newIsoNow();
-          const campaignName = input.campaignName?.trim() || prev.campaign.name;
+          const campaignName = input.campaignName?.trim() || activeCampaign.name;
           const nextSession: Session = {
             id: newId(),
             title: input.title.trim(),
             scheduledAtIso: input.scheduledAtIso,
+            campaignId: activeCampaignId,
             address: input.address?.trim(),
             campaignName,
             notes: input.notes?.trim(),
@@ -435,10 +669,19 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
         }));
       },
       setCampaignNotes(notes) {
-        commit((prev) => ({
-          ...prev,
-          notes: { ...prev.notes, campaign: notes },
-        }));
+        commit((prev) => {
+          const { activeCampaignId } = resolveCampaignState(prev);
+          const byCampaign = ensureNotesByCampaign(prev, activeCampaignId);
+          byCampaign[activeCampaignId] = notes;
+          return {
+            ...prev,
+            notes: {
+              ...prev.notes,
+              campaign: notes,
+              byCampaign,
+            },
+          };
+        });
       },
       resetToSeed() {
         commit(() => createSeedData());
@@ -633,9 +876,10 @@ export function RpgDataProvider(props: { children: React.ReactNode }) {
     isCloudReady,
     user,
   ]);
+  const scopedData = useMemo(() => resolveCampaignScopedData(data), [data]);
 
   return (
-    <RpgDataContext.Provider value={{ data, actions }}>
+    <RpgDataContext.Provider value={{ data: scopedData, actions }}>
       {props.children}
     </RpgDataContext.Provider>
   );

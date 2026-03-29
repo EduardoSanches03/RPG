@@ -187,6 +187,128 @@ describe("RpgDataProvider", () => {
     expect(getCtx().data.sessions[0].title).toBe("Sessao nova");
   });
 
+  it("deve isolar sessoes e notas por campanha ativa", async () => {
+    const getCtx = await renderProvider();
+    const firstCampaignId = getCtx().data.campaign.id;
+
+    await act(async () => {
+      getCtx().actions.addSession({
+        title: "Sessao Campanha A",
+        scheduledAtIso: "2026-03-24T20:00:00.000Z",
+      });
+      getCtx().actions.setCampaignNotes("Resumo da campanha A");
+    });
+
+    await act(async () => {
+      getCtx().actions.createCampaign({
+        name: "Campanha B",
+        system: "savage_pathfinder",
+        role: "mestre",
+        locale: "pt-BR",
+        timeZone: "America/Sao_Paulo",
+      });
+    });
+
+    await waitFor(() => {
+      expect(getCtx().data.campaign.name).toBe("Campanha B");
+    });
+
+    expect(getCtx().data.sessions).toHaveLength(0);
+    expect(getCtx().data.notes.campaign).toBe("");
+
+    await act(async () => {
+      getCtx().actions.addSession({
+        title: "Sessao Campanha B",
+        scheduledAtIso: "2026-03-25T20:00:00.000Z",
+      });
+      getCtx().actions.setCampaignNotes("Resumo da campanha B");
+    });
+
+    await waitFor(() => {
+      expect(getCtx().data.sessions).toHaveLength(1);
+      expect(getCtx().data.sessions[0].title).toBe("Sessao Campanha B");
+    });
+
+    const secondCampaignId = getCtx().data.campaign.id;
+
+    await act(async () => {
+      getCtx().actions.setActiveCampaign(firstCampaignId);
+    });
+
+    await waitFor(() => {
+      expect(getCtx().data.campaign.id).toBe(firstCampaignId);
+      expect(getCtx().data.sessions).toHaveLength(1);
+      expect(getCtx().data.sessions[0].title).toBe("Sessao Campanha A");
+      expect(getCtx().data.notes.campaign).toBe("Resumo da campanha A");
+    });
+
+    await act(async () => {
+      getCtx().actions.setActiveCampaign(secondCampaignId);
+    });
+
+    await waitFor(() => {
+      expect(getCtx().data.campaign.id).toBe(secondCampaignId);
+      expect(getCtx().data.sessions).toHaveLength(1);
+      expect(getCtx().data.sessions[0].title).toBe("Sessao Campanha B");
+      expect(getCtx().data.notes.campaign).toBe("Resumo da campanha B");
+    });
+  });
+
+  it("deve remover campanha e alternar para outra mantendo isolamento", async () => {
+    const getCtx = await renderProvider();
+    const firstCampaignId = getCtx().data.campaign.id;
+
+    await act(async () => {
+      getCtx().actions.addSession({
+        title: "Sessao A",
+        scheduledAtIso: "2026-03-24T20:00:00.000Z",
+      });
+      getCtx().actions.setCampaignNotes("Notas A");
+      getCtx().actions.createCampaign({
+        name: "Campanha B",
+        system: "savage_pathfinder",
+        role: "mestre",
+        locale: "pt-BR",
+        timeZone: "America/Sao_Paulo",
+      });
+    });
+
+    const secondCampaignId = getCtx().data.campaign.id;
+
+    await act(async () => {
+      getCtx().actions.addSession({
+        title: "Sessao B",
+        scheduledAtIso: "2026-03-25T20:00:00.000Z",
+      });
+      getCtx().actions.setCampaignNotes("Notas B");
+    });
+
+    await act(async () => {
+      getCtx().actions.removeCampaign(secondCampaignId);
+    });
+
+    await waitFor(() => {
+      expect(getCtx().data.campaign.id).toBe(firstCampaignId);
+      expect(getCtx().data.campaigns).toHaveLength(1);
+      expect(getCtx().data.sessions).toHaveLength(1);
+      expect(getCtx().data.sessions[0].title).toBe("Sessao A");
+      expect(getCtx().data.notes.campaign).toBe("Notas A");
+      expect(getCtx().data.notes.byCampaign?.[secondCampaignId]).toBeUndefined();
+    });
+  });
+
+  it("nao deve remover a unica campanha existente", async () => {
+    const getCtx = await renderProvider();
+    const currentCampaignId = getCtx().data.campaign.id;
+
+    await act(async () => {
+      getCtx().actions.removeCampaign(currentCampaignId);
+    });
+
+    expect(getCtx().data.campaign.id).toBe(currentCampaignId);
+    expect(getCtx().data.campaigns).toHaveLength(1);
+  });
+
   it("deve normalizar layout ao adicionar modulo de personagem", async () => {
     writeSeed(
       createBaseRpgData({

@@ -55,7 +55,7 @@ function cleanupStorageForRetry(activeStorageKey: string) {
       .map((_, index) => localStorage.key(index))
       .filter(
         (key): key is string =>
-          Boolean(key) &&
+          typeof key === "string" &&
           key.startsWith(STORAGE_KEY_PREFIX) &&
           key !== activeStorageKey,
       );
@@ -111,24 +111,30 @@ function shouldCleanLegacySocial(input: {
 
 export function createSeedData(): RpgDataV1 {
   const createdAtIso = nowIso();
+  const defaultCampaign = {
+    id: createId(),
+    name: "A Taverna",
+    system: "savage_pathfinder",
+    createdAtIso,
+    role: "mestre" as const,
+    locale: "pt-BR",
+    timeZone: "America/Sao_Paulo",
+    isRegistered: false,
+    partyMemberIds: [],
+  };
 
   return {
     version: 1,
-    campaign: {
-      id: createId(),
-      name: "A Taverna",
-      system: "savage_pathfinder",
-      createdAtIso,
-      role: "mestre",
-      locale: "pt-BR",
-      timeZone: "America/Sao_Paulo",
-      isRegistered: false,
-      partyMemberIds: [],
-    },
+    campaign: defaultCampaign,
+    campaigns: [defaultCampaign],
+    activeCampaignId: defaultCampaign.id,
     characters: [],
     sessions: [],
     notes: {
       campaign: "",
+      byCampaign: {
+        [defaultCampaign.id]: "",
+      },
     },
     social: {
       friends: [],
@@ -145,11 +151,16 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
     typeof input === "object" && input !== null ? input : {}
   ) as Record<string, unknown>;
 
-  const campaign = (
+  const campaignRaw = (
     typeof obj.campaign === "object" && obj.campaign !== null
       ? obj.campaign
       : {}
   ) as Record<string, unknown>;
+  const campaignsRaw = Array.isArray(obj.campaigns)
+    ? (obj.campaigns as unknown[])
+    : [];
+  const activeCampaignIdRaw =
+    typeof obj.activeCampaignId === "string" ? obj.activeCampaignId : undefined;
 
   const charactersRaw = Array.isArray(obj.characters)
     ? (obj.characters as unknown[])
@@ -175,6 +186,69 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
   const requestsSentRaw = Array.isArray(socialRaw.requestsSent)
     ? (socialRaw.requestsSent as unknown[])
     : [];
+
+  function normalizeCampaign(inputCampaign: Record<string, unknown>) {
+    return {
+      ...seed.campaign,
+      ...inputCampaign,
+      id:
+        typeof inputCampaign.id === "string" && inputCampaign.id.trim().length > 0
+          ? inputCampaign.id
+          : createId(),
+      name:
+        typeof inputCampaign.name === "string" ? inputCampaign.name : seed.campaign.name,
+      system:
+        typeof inputCampaign.system === "string"
+          ? inputCampaign.system
+          : seed.campaign.system,
+      createdAtIso:
+        typeof inputCampaign.createdAtIso === "string"
+          ? inputCampaign.createdAtIso
+          : seed.campaign.createdAtIso,
+      role:
+        inputCampaign.role === "mestre" || inputCampaign.role === "jogador"
+          ? inputCampaign.role
+          : seed.campaign.role,
+      locale:
+        typeof inputCampaign.locale === "string" && inputCampaign.locale.trim().length > 0
+          ? inputCampaign.locale
+          : seed.campaign.locale,
+      timeZone:
+        typeof inputCampaign.timeZone === "string" &&
+        inputCampaign.timeZone.trim().length > 0
+          ? inputCampaign.timeZone
+          : seed.campaign.timeZone,
+      isRegistered:
+        typeof inputCampaign.isRegistered === "boolean"
+          ? inputCampaign.isRegistered
+          : seed.campaign.isRegistered,
+      partyMemberIds: Array.isArray(inputCampaign.partyMemberIds)
+        ? (inputCampaign.partyMemberIds as unknown[]).filter(
+            (item): item is string => typeof item === "string" && item.trim().length > 0,
+          )
+        : seed.campaign.partyMemberIds,
+    };
+  }
+
+  const legacyCampaign = normalizeCampaign(campaignRaw);
+  const parsedCampaigns = campaignsRaw
+    .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    .map((entry) => normalizeCampaign(entry));
+  const campaignMap = new Map<string, ReturnType<typeof normalizeCampaign>>();
+  const initialCampaigns = parsedCampaigns.length > 0 ? parsedCampaigns : [legacyCampaign];
+  initialCampaigns.forEach((entry) => {
+    if (!campaignMap.has(entry.id)) campaignMap.set(entry.id, entry);
+  });
+  if (!campaignMap.has(legacyCampaign.id)) campaignMap.set(legacyCampaign.id, legacyCampaign);
+  const campaigns = Array.from(campaignMap.values());
+  const activeCampaignId =
+    activeCampaignIdRaw && campaignMap.has(activeCampaignIdRaw)
+      ? activeCampaignIdRaw
+      : campaignMap.has(legacyCampaign.id)
+        ? legacyCampaign.id
+        : campaigns[0].id;
+  const activeCampaign =
+    campaigns.find((entry) => entry.id === activeCampaignId) ?? campaigns[0];
 
   const normalizeCharacter = (input: unknown) => {
     if (typeof input !== "object" || input === null) return null;
@@ -212,7 +286,7 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
             .map((friend) => {
               const source = friend as Record<string, unknown>;
               const status = source.status;
-              const normalizedStatus =
+              const normalizedStatus: "online" | "in_party" | "offline" =
                 status === "online" || status === "in_party" || status === "offline"
                   ? status
                   : "offline";
@@ -234,7 +308,7 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
             .filter((group) => typeof group === "object" && group !== null)
             .map((group) => {
               const source = group as Record<string, unknown>;
-              const role =
+              const role: "owner" | "member" =
                 source.role === "owner" || source.role === "member"
                   ? source.role
                   : "member";
@@ -266,7 +340,7 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
             .map((entry) => {
               const source = entry as Record<string, unknown>;
               const status = source.status;
-              const normalizedStatus =
+              const normalizedStatus: "online" | "in_party" | "offline" | undefined =
                 status === "online" || status === "in_party" || status === "offline"
                   ? status
                   : undefined;
@@ -323,55 +397,57 @@ export function normalizeRpgDataV1(input: unknown): RpgDataV1 {
       }
     : normalizedSocial;
 
+  const campaignById = new Map(campaigns.map((entry) => [entry.id, entry]));
+  const normalizedSessions = sessionsRaw
+    .filter((session): session is Record<string, unknown> => typeof session === "object" && session !== null)
+    .map((session) => {
+      const campaignId =
+        typeof session.campaignId === "string" && campaignById.has(session.campaignId)
+          ? session.campaignId
+          : activeCampaign.id;
+      const campaignName =
+        typeof session.campaignName === "string" && session.campaignName.trim().length > 0
+          ? session.campaignName
+          : campaignById.get(campaignId)?.name ?? activeCampaign.name;
+      return {
+        ...session,
+        campaignId,
+        campaignName,
+      };
+    }) as any[];
+
+  const notesByCampaignRaw = (
+    typeof notesRaw.byCampaign === "object" && notesRaw.byCampaign !== null
+      ? notesRaw.byCampaign
+      : {}
+  ) as Record<string, unknown>;
+  const notesByCampaign = campaigns.reduce<Record<string, string>>((acc, campaignEntry) => {
+    const savedValue = notesByCampaignRaw[campaignEntry.id];
+    if (typeof savedValue === "string") {
+      acc[campaignEntry.id] = savedValue;
+      return acc;
+    }
+
+    acc[campaignEntry.id] =
+      campaignEntry.id === activeCampaign.id && typeof notesRaw.campaign === "string"
+        ? notesRaw.campaign
+        : "";
+    return acc;
+  }, {});
+  const campaignNote = notesByCampaign[activeCampaign.id] ?? "";
+
   return {
     version: 1,
-    campaign: {
-      ...seed.campaign,
-      ...campaign,
-      id: typeof campaign.id === "string" ? campaign.id : seed.campaign.id,
-      name:
-        typeof campaign.name === "string" ? campaign.name : seed.campaign.name,
-      system:
-        typeof campaign.system === "string"
-          ? campaign.system
-          : seed.campaign.system,
-      createdAtIso:
-        typeof campaign.createdAtIso === "string"
-          ? campaign.createdAtIso
-          : seed.campaign.createdAtIso,
-      role:
-        campaign.role === "mestre" || campaign.role === "jogador"
-          ? campaign.role
-          : seed.campaign.role,
-      locale:
-        typeof campaign.locale === "string" && campaign.locale.trim().length > 0
-          ? campaign.locale
-          : seed.campaign.locale,
-      timeZone:
-        typeof campaign.timeZone === "string" && campaign.timeZone.trim().length > 0
-          ? campaign.timeZone
-          : seed.campaign.timeZone,
-      isRegistered:
-        typeof campaign.isRegistered === "boolean"
-          ? campaign.isRegistered
-          : seed.campaign.isRegistered,
-      partyMemberIds: Array.isArray(campaign.partyMemberIds)
-        ? (campaign.partyMemberIds as unknown[]).filter(
-            (item): item is string => typeof item === "string" && item.trim().length > 0,
-          )
-        : seed.campaign.partyMemberIds,
-    },
+    campaign: activeCampaign,
+    campaigns,
+    activeCampaignId: activeCampaign.id,
     characters: charactersRaw
       .map((character) => normalizeCharacter(character))
       .filter((character): character is any => Boolean(character)),
-    sessions: sessionsRaw.filter(
-      (s) => typeof s === "object" && s !== null,
-    ) as any,
+    sessions: normalizedSessions,
     notes: {
-      campaign:
-        typeof notesRaw.campaign === "string"
-          ? (notesRaw.campaign as string)
-          : seed.notes.campaign,
+      campaign: campaignNote,
+      byCampaign: notesByCampaign,
     },
     social,
   };

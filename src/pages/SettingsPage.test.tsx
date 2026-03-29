@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { SettingsPage } from "./SettingsPage";
@@ -102,7 +102,7 @@ describe("SettingsPage", () => {
       },
     );
 
-    expect(screen.getByRole("heading", { name: "Mestre Arcano" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Mestre Arcano" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "User Settings" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Preferences" })).toBeInTheDocument();
     expect(screen.getByText("Sessoes Jogadas")).toBeInTheDocument();
@@ -114,7 +114,7 @@ describe("SettingsPage", () => {
     expect(emailSwitch).toHaveAttribute("aria-checked", "false");
   });
 
-  it("deve usar identidade real do usuario logado quando metadata nao tiver nome", () => {
+  it("deve usar identidade real do usuario logado quando metadata nao tiver nome", async () => {
     authMockState.value = {
       user: {
         id: "user-real",
@@ -129,26 +129,27 @@ describe("SettingsPage", () => {
 
     renderSettings();
 
-    expect(screen.getByRole("heading", { name: "jogador" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "jogador" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("jogador@taverna.rpg")).toBeInTheDocument();
   });
 
-  it("deve ignorar placeholders legados e manter dados do usuario autenticado", () => {
-    const storageKey = "a-taverna:profile:v1:user-legacy";
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        displayName: "Mestre Arcano",
-        email: "arcanista@taverna.rpg",
-        bio: "Bio antiga",
-      }),
-    );
+  it("deve consultar perfil direto no banco e refletir dados remotos", async () => {
+    userProfileApiMock.getUserProfileSettings.mockResolvedValueOnce({
+      displayName: "Kaelen Banco",
+      bio: "Bio vinda da nuvem",
+      badge: "Aventureiro",
+      preferences: {
+        emailNotifications: true,
+        obsidianTheme: true,
+        diceSound: false,
+      },
+    });
 
     authMockState.value = {
       user: {
         id: "user-legacy",
         email: "kaelen@taverna.rpg",
-        user_metadata: { name: "Kaelen" },
+        user_metadata: { name: "Nome Local" },
       },
       isLoading: false,
       signInWithEmail: vi.fn(),
@@ -158,7 +159,67 @@ describe("SettingsPage", () => {
 
     renderSettings();
 
-    expect(screen.getByRole("heading", { name: "Kaelen" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(userProfileApiMock.getUserProfileSettings).toHaveBeenCalledWith("user-legacy");
+    });
+    expect(await screen.findByRole("heading", { name: "Kaelen Banco" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("kaelen@taverna.rpg")).toBeInTheDocument();
+  });
+
+  it("deve salvar edicao do perfil no banco ao confirmar alteracoes", async () => {
+    const user = userEvent.setup();
+    userProfileApiMock.getUserProfileSettings
+      .mockResolvedValueOnce({
+        displayName: "Mestre Arcano",
+        bio: "Narrador inicial",
+        badge: "Grande Arquivista",
+        preferences: {
+          emailNotifications: true,
+          obsidianTheme: true,
+          diceSound: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        displayName: "Kaelen",
+        bio: "Narrador inicial",
+        badge: "Grande Arquivista",
+        preferences: {
+          emailNotifications: true,
+          obsidianTheme: true,
+          diceSound: false,
+        },
+      });
+
+    authMockState.value = {
+      user: {
+        id: "user-1",
+        email: "arcano@taverna.rpg",
+        user_metadata: { name: "Mestre Arcano" },
+      },
+      isLoading: false,
+      signInWithEmail: vi.fn(),
+      signUpWithEmail: vi.fn(),
+      signOut: vi.fn(),
+    };
+
+    renderSettings();
+
+    const editButton = await screen.findByRole("button", { name: "Editar Perfil" });
+    await user.click(editButton);
+
+    const displayNameInput = screen.getByDisplayValue("Mestre Arcano");
+    await user.clear(displayNameInput);
+    await user.type(displayNameInput, "Kaelen");
+
+    await user.click(screen.getByRole("button", { name: "Salvar Perfil" }));
+
+    await waitFor(() => {
+      expect(userProfileApiMock.upsertUserProfileSettings).toHaveBeenCalledWith({
+        userId: "user-1",
+        profile: expect.objectContaining({
+          displayName: "Kaelen",
+        }),
+      });
+    });
   });
 });

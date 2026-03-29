@@ -67,9 +67,9 @@ export function AppShell() {
 }
 
 function AppShellContent() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const { data, actions } = useRpgData();
-  const availableSystemIds = useMemo(
+  const availableSystemIds = useMemo<Set<string>>(
     () => new Set(RPG_SYSTEM_OPTIONS.map((option) => option.id)),
     [],
   );
@@ -112,7 +112,13 @@ function AppShellContent() {
   const avatarLabel = userLabel.slice(0, 2).toUpperCase();
 
   const mobileNavItems = useMemo(() => sideNavItems.filter((item) => item.to), []);
+  const campaigns = useMemo(
+    () => (data.campaigns?.length ? data.campaigns : [data.campaign]),
+    [data.campaigns, data.campaign],
+  );
+  const activeCampaignId = data.activeCampaignId ?? data.campaign.id;
   const isCampaignRegistered = data.campaign.isRegistered ?? false;
+  const isCampaignInteractionDisabled = isLoading || !user;
   const friendIds = useMemo(
     () => new Set((data.social?.friends ?? []).map((friend) => friend.id)),
     [data.social?.friends],
@@ -126,13 +132,21 @@ function AppShellContent() {
     [receivedRequests],
   );
 
-  function mapFriendStatus(friends: FriendProfile[]) {
+  function mapFriendStatus(
+    friends: FriendProfile[],
+  ): Array<{
+    id: string;
+    name: string;
+    status: "online" | "in_party" | "offline";
+    activity?: string;
+    avatarUrl?: string;
+  }> {
     return friends.map((friend) => {
       const isOnline = onlineUserIds.has(friend.id);
       return {
         id: friend.id,
         name: friend.displayName,
-        status: (isOnline ? "online" : "offline") as const,
+        status: isOnline ? "online" : "offline",
         activity: isOnline ? "Online" : "Offline",
         avatarUrl: friend.avatarUrl,
       };
@@ -143,7 +157,10 @@ function AppShellContent() {
     let sentRequests: SentFriendRequest[] = [];
 
     try {
-      sentRequests = await listSentFriendRequests(userId);
+      const fetched = await listSentFriendRequests(userId);
+      sentRequests = fetched.filter(
+        (request): request is SentFriendRequest => Boolean(request),
+      );
       actions.setSentFriendRequests(
         sentRequests.map((request) => ({
           id: request.addresseeId,
@@ -160,14 +177,20 @@ function AppShellContent() {
 
     try {
       const incoming = await listReceivedFriendRequests(userId);
-      setReceivedRequests(incoming);
+      setReceivedRequests(
+        incoming.filter(
+          (request): request is ReceivedFriendRequest => Boolean(request),
+        ),
+      );
     } catch {
       // Keep local state as fallback when cloud is unavailable.
     }
 
     try {
       const friends = await listAcceptedFriends(userId);
-      setFriendProfiles(friends);
+      setFriendProfiles(
+        friends.filter((friend): friend is FriendProfile => Boolean(friend)),
+      );
     } catch {
       // Keep local state as fallback when cloud is unavailable.
     }
@@ -176,7 +199,8 @@ function AppShellContent() {
   }
 
   useEffect(() => {
-    if (!user?.id) {
+    const userId = user?.id;
+    if (!userId) {
       setReceivedRequests([]);
       setFriendProfiles([]);
       setOnlineUserIds(new Set());
@@ -185,7 +209,7 @@ function AppShellContent() {
     let isCancelled = false;
 
     void (async () => {
-      await syncSocialData(user.id);
+      await syncSocialData(userId);
       if (isCancelled) return;
     })();
 
@@ -195,10 +219,12 @@ function AppShellContent() {
   }, [actions, user?.id]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    const userId = user?.id;
+    if (typeof userId !== "string" || userId.trim().length === 0) return;
+    const normalizedUserId = userId;
 
     function handleSocialRefresh() {
-      void syncSocialData(user.id);
+      void syncSocialData(normalizedUserId);
     }
 
     window.addEventListener("social:refresh", handleSocialRefresh);
@@ -255,18 +281,80 @@ function AppShellContent() {
     };
   }, [user?.id, userSearch]);
 
+  useEffect(() => {
+    if (!isCampaignInteractionDisabled) return;
+    setIsCampaignModalOpen(false);
+  }, [isCampaignInteractionDisabled]);
+
+  function applyCampaignForm(campaign: typeof data.campaign) {
+    setCampaignName(campaign.name || "");
+    setCampaignSystem(resolveSystemId(campaign.system));
+    setCampaignRole(campaign.role ?? "mestre");
+    setCampaignLocale(campaign.locale ?? "pt-BR");
+    setCampaignTimeZone(campaign.timeZone ?? "America/Sao_Paulo");
+    setCampaignPartyMemberIds(campaign.partyMemberIds ?? []);
+  }
+
   function openCampaignModal() {
-    setCampaignName(data.campaign.name || "");
-    setCampaignSystem(resolveSystemId(data.campaign.system));
-    setCampaignRole(data.campaign.role ?? "mestre");
-    setCampaignLocale(data.campaign.locale ?? "pt-BR");
-    setCampaignTimeZone(data.campaign.timeZone ?? "America/Sao_Paulo");
-    setCampaignPartyMemberIds(data.campaign.partyMemberIds ?? []);
+    if (isCampaignInteractionDisabled) return;
+    applyCampaignForm(data.campaign);
     setIsCampaignModalOpen(true);
   }
 
   function closeCampaignModal() {
     setIsCampaignModalOpen(false);
+  }
+
+  function selectCampaign(campaignId: string) {
+    const next = campaigns.find((campaign) => campaign.id === campaignId);
+    if (!next) return;
+    actions.setActiveCampaign(next.id);
+    applyCampaignForm(next);
+  }
+
+  function createCampaign() {
+    const locale = campaignLocale.trim() || "pt-BR";
+    const timeZone = campaignTimeZone.trim() || "America/Sao_Paulo";
+    const system = resolveSystemId(campaignSystem);
+    const baseName = `Campanha ${campaigns.length + 1}`;
+    const existingNames = new Set(
+      campaigns.map((campaign) => campaign.name.trim().toLowerCase()).filter(Boolean),
+    );
+    let name = baseName;
+    let suffix = 2;
+    while (existingNames.has(name.trim().toLowerCase())) {
+      name = `${baseName} ${suffix}`;
+      suffix += 1;
+    }
+
+    actions.createCampaign({
+      name,
+      system,
+      role: campaignRole,
+      locale,
+      timeZone,
+    });
+
+    setCampaignName(name);
+    setCampaignSystem(system);
+    setCampaignRole(campaignRole);
+    setCampaignLocale(locale);
+    setCampaignTimeZone(timeZone);
+    setCampaignPartyMemberIds([]);
+  }
+
+  function removeActiveCampaign() {
+    if (campaigns.length <= 1) return;
+    const targetCampaign = campaigns.find((campaign) => campaign.id === activeCampaignId);
+    if (!targetCampaign) return;
+    const confirmed = window.confirm(
+      `Deseja remover a campanha \"${targetCampaign.name || "Campanha sem nome"}\"?`,
+    );
+    if (!confirmed) return;
+
+    actions.removeCampaign(targetCampaign.id);
+    const fallbackCampaign = campaigns.find((campaign) => campaign.id !== targetCampaign.id);
+    if (fallbackCampaign) applyCampaignForm(fallbackCampaign);
   }
 
   function saveCampaignRegistration() {
@@ -411,6 +499,13 @@ function AppShellContent() {
             type="button"
             className="ledger-topbar__campaign-trigger"
             onClick={openCampaignModal}
+            disabled={isCampaignInteractionDisabled}
+            aria-disabled={isCampaignInteractionDisabled}
+            title={
+              isCampaignInteractionDisabled
+                ? "Faca login para configurar a campanha."
+                : undefined
+            }
           >
             <span className="ledger-topbar__campaign-meta">
               {isCampaignRegistered ? "Campanha Ativa" : "Campanha Nao Registrada"}
@@ -607,6 +702,33 @@ function AppShellContent() {
             </header>
 
             <div className="field">
+              <label className="label">Campanhas</label>
+              <div className="campaign-selector">
+                {campaigns.map((campaign) => {
+                  const isActive = campaign.id === activeCampaignId;
+                  return (
+                    <button
+                      key={campaign.id}
+                      type="button"
+                      className={
+                        isActive
+                          ? "campaign-selector__item campaign-selector__item--active"
+                          : "campaign-selector__item"
+                      }
+                      onClick={() => selectCampaign(campaign.id)}
+                    >
+                      <span>{campaign.name || "Campanha sem nome"}</span>
+                      <small>{getRpgSystemLabel(campaign.system)}</small>
+                    </button>
+                  );
+                })}
+                <button type="button" className="campaign-selector__new" onClick={createCampaign}>
+                  + Nova Campanha
+                </button>
+              </div>
+            </div>
+
+            <div className="field">
               <label className="label">Nome da Campanha</label>
               <input
                 className="input"
@@ -699,6 +821,18 @@ function AppShellContent() {
             </div>
 
             <div className="ledger-modal__actions">
+              <button
+                className="button button--danger ledger-modal__remove-btn"
+                onClick={removeActiveCampaign}
+                disabled={campaigns.length <= 1}
+                title={
+                  campaigns.length <= 1
+                    ? "Nao e possivel remover a unica campanha."
+                    : "Remover campanha ativa"
+                }
+              >
+                Remover Campanha
+              </button>
               <button className="button button--ghost" onClick={closeCampaignModal}>
                 Cancelar
               </button>

@@ -21,35 +21,6 @@ type UserProfile = {
   preferences: ProfilePreferences;
 };
 
-const PROFILE_STORAGE_PREFIX = "a-taverna:profile:v1:";
-const LEGACY_PLACEHOLDER_DISPLAY_NAME = "Mestre Arcano";
-const LEGACY_PLACEHOLDER_EMAILS = new Set(["arcanista@taverna.rpg", "sem-email@taverna.rpg"]);
-
-function normalizeStoredProfile(raw: unknown): Partial<UserProfile> {
-  if (!raw || typeof raw !== "object") return {};
-  const source = raw as Record<string, unknown>;
-  const preferences =
-    typeof source.preferences === "object" && source.preferences !== null
-      ? (source.preferences as Record<string, unknown>)
-      : {};
-
-  return {
-    badge: typeof source.badge === "string" ? source.badge : undefined,
-    displayName: typeof source.displayName === "string" ? source.displayName : undefined,
-    bio: typeof source.bio === "string" ? source.bio : undefined,
-    email: typeof source.email === "string" ? source.email : undefined,
-    preferences: {
-      emailNotifications:
-        typeof preferences.emailNotifications === "boolean"
-          ? preferences.emailNotifications
-          : true,
-      obsidianTheme:
-        typeof preferences.obsidianTheme === "boolean" ? preferences.obsidianTheme : true,
-      diceSound: typeof preferences.diceSound === "boolean" ? preferences.diceSound : false,
-    },
-  };
-}
-
 function buildDefaultProfile(input: { displayName: string; email: string }): UserProfile {
   return {
     badge: "Grande Arquivista",
@@ -87,19 +58,6 @@ function resolveLoggedUserIdentity(user: {
   return { displayName, email: email || "sem-email@taverna.rpg" };
 }
 
-function shouldIgnoreStoredDisplayName(value: string | undefined) {
-  if (!value) return true;
-  return value.trim() === LEGACY_PLACEHOLDER_DISPLAY_NAME;
-}
-
-function shouldIgnoreStoredEmail(value: string | undefined, currentUserEmail: string) {
-  if (!value) return true;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return true;
-  if (LEGACY_PLACEHOLDER_EMAILS.has(normalized)) return true;
-  return normalized !== currentUserEmail.trim().toLowerCase();
-}
-
 function avatarInitials(name: string) {
   const parts = name
     .trim()
@@ -122,6 +80,7 @@ export function SettingsPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [isProfileHydrating, setIsProfileHydrating] = useState(false);
   const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile>(() =>
     buildDefaultProfile({ displayName: "Aventureiro", email: "sem-email@taverna.rpg" }),
@@ -147,7 +106,11 @@ export function SettingsPage() {
   }, [emailTrimmed, hasMinPassword, isSignup, password, passwordsMatch]);
 
   useEffect(() => {
-    if (!user) return;
+    const userId = user?.id;
+    if (!userId) {
+      setIsProfileHydrating(false);
+      return;
+    }
 
     const identity = resolveLoggedUserIdentity({
       email: user.email,
@@ -155,72 +118,55 @@ export function SettingsPage() {
         (user.user_metadata as Record<string, unknown> | null | undefined) ?? null,
     });
     const base = buildDefaultProfile(identity);
-    let localResolved = base;
 
-    const storageKey = `${PROFILE_STORAGE_PREFIX}${user.id}`;
-    const raw = localStorage.getItem(storageKey);
-    if (raw) {
-      try {
-        const parsed = normalizeStoredProfile(JSON.parse(raw));
-        const parsedDisplayName = shouldIgnoreStoredDisplayName(parsed.displayName)
-          ? base.displayName
-          : parsed.displayName ?? base.displayName;
-        const parsedEmail = shouldIgnoreStoredEmail(parsed.email, identity.email)
-          ? base.email
-          : parsed.email ?? base.email;
-
-        localResolved = {
-          ...base,
-          ...parsed,
-          displayName: parsedDisplayName,
-          email: parsedEmail,
-          preferences: {
-            ...base.preferences,
-            ...(parsed.preferences ?? {}),
-          },
-        };
-      } catch {
-        localResolved = base;
-      }
+    if (!isSupabaseConfigured) {
+      setProfile(base);
+      setIsProfileHydrating(false);
+      return;
     }
 
-    setProfile(localResolved);
-
-    if (!isSupabaseConfigured) return;
+    setIsProfileHydrating(true);
     let isCancelled = false;
     void (async () => {
       try {
-        const remote = await getUserProfileSettings(user.id);
-        if (isCancelled || !remote) return;
+        const remote = await getUserProfileSettings(userId);
+        if (isCancelled) return;
+        if (!remote) {
+          setProfile(base);
+          return;
+        }
+
         setProfile((current) => ({
           ...current,
+          ...base,
           ...remote,
           email: identity.email,
           preferences: {
+            ...base.preferences,
             ...current.preferences,
             ...remote.preferences,
           },
         }));
       } catch {
-        // Keep local fallback when cloud profile is unavailable.
+        if (!isCancelled) setProfile(base);
+      } finally {
+        if (!isCancelled) setIsProfileHydrating(false);
       }
     })();
 
     return () => {
       isCancelled = true;
     };
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (!user) return;
-    const storageKey = `${PROFILE_STORAGE_PREFIX}${user.id}`;
-    localStorage.setItem(storageKey, JSON.stringify(profile));
-
+    const userId = user?.id;
+    if (!userId) return;
     if (!isSupabaseConfigured || isEditingProfile) return;
 
     const timeoutId = window.setTimeout(() => {
       void upsertUserProfileSettings({
-        userId: user.id,
+        userId,
         profile: {
           displayName: profile.displayName,
           bio: profile.bio,
@@ -235,7 +181,26 @@ export function SettingsPage() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [isEditingProfile, profile, user]);
+  }, [isEditingProfile, profile, user?.id]);
+
+  async function saveProfileToCloud(userId: string, currentProfile: UserProfile) {
+    await upsertUserProfileSettings({
+      userId,
+      profile: {
+        displayName: currentProfile.displayName,
+        bio: currentProfile.bio,
+        badge: currentProfile.badge,
+        preferences: currentProfile.preferences,
+      },
+    });
+
+    const refreshed = await getUserProfileSettings(userId);
+    if (!refreshed) {
+      throw new Error("Perfil salvo, mas nao foi possivel confirmar leitura no banco.");
+    }
+
+    return refreshed;
+  }
 
   async function handleProfileEditToggle() {
     if (!isEditingProfile) {
@@ -244,23 +209,29 @@ export function SettingsPage() {
       return;
     }
 
-    if (!user || !isSupabaseConfigured) {
+    if (!user) {
       setIsEditingProfile(false);
       setProfileSaveMessage("Perfil salvo localmente.");
       return;
     }
 
+    if (!isSupabaseConfigured) {
+      setProfileSaveMessage("Supabase nao configurado. Nao foi possivel salvar no banco.");
+      return;
+    }
+
     try {
       setIsProfileSaving(true);
-      await upsertUserProfileSettings({
-        userId: user.id,
-        profile: {
-          displayName: profile.displayName,
-          bio: profile.bio,
-          badge: profile.badge,
-          preferences: profile.preferences,
+      const remoteProfile = await saveProfileToCloud(user.id, profile);
+      setProfile((current) => ({
+        ...current,
+        ...remoteProfile,
+        email: current.email,
+        preferences: {
+          ...current.preferences,
+          ...remoteProfile.preferences,
         },
-      });
+      }));
       setIsEditingProfile(false);
       setProfileSaveMessage("Perfil salvo com sucesso.");
     } catch (caught: any) {
@@ -272,11 +243,13 @@ export function SettingsPage() {
 
   const profileStats = useMemo(() => {
     const sessionsPlayed = data.sessions.length;
-    const activeCampaigns = data.campaign.isRegistered ? 1 : 0;
+    const activeCampaigns = (data.campaigns ?? [data.campaign]).filter(
+      (campaign) => campaign.isRegistered,
+    ).length;
     const charactersCreated = data.characters.length;
     const masterLevel = Math.max(1, Math.floor((sessionsPlayed + charactersCreated) / 2));
     return { sessionsPlayed, activeCampaigns, charactersCreated, masterLevel };
-  }, [data.campaign.isRegistered, data.characters.length, data.sessions.length]);
+  }, [data.campaign, data.campaigns, data.characters.length, data.sessions.length]);
 
   function togglePreference(key: keyof ProfilePreferences) {
     setProfile((prev) => ({
@@ -288,7 +261,7 @@ export function SettingsPage() {
     }));
   }
 
-  if (isLoading) {
+  if (isLoading || (Boolean(user) && isProfileHydrating)) {
     return (
       <div className="page profile-page">
         <div className="card profile-loading">Carregando perfil...</div>
@@ -447,7 +420,7 @@ export function SettingsPage() {
 
             <div className="profile-preferences-footnote">
               <IconCoin size={14} />
-              <span>Configuracoes salvas no perfil do usuario e em fallback local.</span>
+              <span>Configuracoes consultadas e salvas direto no banco.</span>
               <IconDice size={14} />
             </div>
           </article>

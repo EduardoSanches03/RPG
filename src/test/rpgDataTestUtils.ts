@@ -2,23 +2,30 @@ import type { RpgDataV1 } from "../domain/rpg";
 import type { RpgDataActions } from "../store/RpgDataContext";
 
 export function createBaseRpgData(overrides?: Partial<RpgDataV1>): RpgDataV1 {
+  const baseCampaign = {
+    id: "camp-1",
+    name: "Minha Campanha",
+    system: "savage_pathfinder",
+    createdAtIso: "2026-03-24T00:00:00.000Z",
+    role: "mestre" as const,
+    locale: "pt-BR",
+    timeZone: "America/Sao_Paulo",
+    isRegistered: true,
+    partyMemberIds: [],
+  };
+
   return {
     version: 1,
-    campaign: {
-      id: "camp-1",
-      name: "Minha Campanha",
-      system: "savage_pathfinder",
-      createdAtIso: "2026-03-24T00:00:00.000Z",
-      role: "mestre",
-      locale: "pt-BR",
-      timeZone: "America/Sao_Paulo",
-      isRegistered: true,
-      partyMemberIds: [],
-    },
+    campaign: baseCampaign,
+    campaigns: [baseCampaign],
+    activeCampaignId: baseCampaign.id,
     characters: [],
     sessions: [],
     notes: {
       campaign: "",
+      byCampaign: {
+        [baseCampaign.id]: "",
+      },
     },
     social: {
       friends: [
@@ -63,6 +70,9 @@ export function createMockActions(
   overrides?: Partial<RpgDataActions>,
 ): RpgDataActions {
   const base: RpgDataActions = {
+    createCampaign: vi.fn(),
+    removeCampaign: vi.fn(),
+    setActiveCampaign: vi.fn(),
     setCampaignName: vi.fn(),
     setCampaignSystem: vi.fn(),
     registerCampaign: vi.fn(),

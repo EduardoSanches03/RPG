@@ -123,6 +123,7 @@ export type Character = {
   name: string;
   system: string;
   playerName: string;
+  campaignId?: RpgId;
   class?: string;
   race?: string;
   ancestry?: string;
@@ -144,6 +145,7 @@ export type Session = {
   title: string;
   scheduledAtIso: string;
   createdAtIso: string;
+  campaignId?: RpgId;
   address?: string;
   campaignName?: string;
   notes?: string;
@@ -189,10 +191,13 @@ export type SocialFriendRequest = {
 export type RpgDataV1 = {
   version: 1;
   campaign: Campaign;
+  campaigns?: Campaign[];
+  activeCampaignId?: RpgId;
   characters: Character[];
   sessions: Session[];
   notes: {
     campaign: string;
+    byCampaign?: Record<RpgId, string>;
   };
   social?: {
     friends: SocialFriend[];
